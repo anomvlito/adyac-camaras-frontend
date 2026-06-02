@@ -1,485 +1,601 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import Webcam from "react-webcam";
-import { Search, LogOut, LogIn, X, Check, Car, Sun, Moon, Trash2, Activity, ListOrdered, Clock, RefreshCw, Eraser, Video, UploadCloud, FileSpreadsheet } from "lucide-react";
-import { format } from "date-fns";
-import { type ParkedCar, calculateFee } from "../lib/parking";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { format, addDays, subDays, isToday, parseISO } from "date-fns";
+import { es } from "date-fns/locale";
+import {
+  Car, AlertTriangle, CheckCircle2, HelpCircle, Upload,
+  Calendar, RefreshCw, Image as ImageIcon, X,
+  ChevronLeft, ChevronRight, LogIn, LogOut, Eye, EyeOff, User,
+} from "lucide-react";
 
-const EVENT_FEES = [
-  { id: "normal", name: "Normal", amount: null },
-  { id: "event_5k", name: "Matucana", amount: 5000 },
-  { id: "event_8k", name: "Premium", amount: 8000 },
-  { id: "event_10k", name: "VIP", amount: 10000 },
-];
+const API = process.env.NEXT_PUBLIC_API_URL || "https://efforts-belts-mountain-tile.trycloudflare.com";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL
-  ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/?$/, "")
-  : "https://efforts-belts-mountain-tile.trycloudflare.com";
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-export default function ParkingMVP() {
-  const [cars, setCars] = useState<Record<string, ParkedCar>>({});
-  const [history, setHistory] = useState<any[]>([]);
-  const [stats, setStats] = useState({ today_income: 0, today_entries: 0, today_exits: 0, parked_now: 0 });
-  const [selectedEvent, setSelectedEvent] = useState(EVENT_FEES[0]);
-  const [activeTab, setActiveTab] = useState<"actions" | "monitor" | "video" | "stats">("actions");
-  
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [processingVideoId, setProcessingVideoId] = useState<string | null>(null);
-  const [videoResults, setVideoResults] = useState<any[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [cameraMode, setCameraMode] = useState<"entry" | "exit">("entry");
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [manualPlate, setManualPlate] = useState("");
-  const [showManualInput, setShowManualInput] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(true);
-  
-  const [actionResult, setActionResult] = useState<{ plate: string; action: string; fee?: number } | null>(null);
+type HistoryEntry = {
+  timestamp: string; plate: string; action: string;
+  status: string; fee: number; confidence: number; image_url: string | null;
+};
+type Stats = {
+  today_income: number; today_entries: number;
+  today_exits: number; parked_now: number;
+};
+type ReconcileResult = {
+  date: string;
+  summary: { camera_total: number; excel_total: number; matched: number; camera_only: number; excel_only: number; excel_revenue: number; };
+  camera_only: any[]; matched: any[]; excel_only: any[];
+};
+type AuthState = { token: string; username: string; role: string } | null;
 
-  const webcamRef = useRef<Webcam>(null);
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
 
-  const fetchData = async () => {
-    try {
-      const ts = Date.now();
-      const today = new Date().toISOString().split('T')[0];
-      const [c, s, h] = await Promise.all([
-        fetch(`${API_BASE}/api/cars?t=${ts}`),
-        fetch(`${API_BASE}/api/stats?t=${ts}`),
-        fetch(`${API_BASE}/api/history?date=${today}&limit=200`)
-      ]);
-      if (c.ok) setCars(await c.json());
-      if (s.ok) setStats(await s.json());
-      if (h.ok) setHistory(await h.json());
-    } catch (e) {
-      console.warn("API Error");
-    }
-  };
+function getAuth(): AuthState {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("cp_auth");
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
 
-  useEffect(() => {
-    fetchData();
-    // Intelligent Background Polling (15 seconds, only if tab is visible)
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchData();
-      }
-    }, 15000);
-    
-    if (localStorage.getItem("theme") === "light") setIsDarkMode(false);
-    return () => clearInterval(interval);
-  }, []);
+function setAuth(auth: AuthState) {
+  if (auth) localStorage.setItem("cp_auth", JSON.stringify(auth));
+  else localStorage.removeItem("cp_auth");
+}
 
-  const toggleTheme = () => {
-    const next = !isDarkMode;
-    setIsDarkMode(next);
-    localStorage.setItem("theme", next ? "dark" : "light");
-  };
+function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const auth = getAuth();
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...(auth ? { Authorization: `Bearer ${auth.token}` } : {}),
+    },
+  });
+}
 
-  const processPlate = async (p: string, mode: "entry" | "exit") => {
-    const cleaned = p.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    try {
-      if (mode === "entry") {
-        if (cars[cleaned]) { alert("Ya registrado"); return; }
-        await fetch(`${API_BASE}/api/entry`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plate: cleaned, isEvent: selectedEvent.amount !== null, eventFee: selectedEvent.amount })
-        });
-        setActionResult({ plate: cleaned, action: "entrada" });
-      } else {
-        const car = cars[cleaned];
-        if (!car) { alert("Auto no encontrado"); return; }
-        const fee = calculateFee(car.entryTime, Date.now(), car.isEvent, car.eventFee);
-        await fetch(`${API_BASE}/api/exit/${cleaned}?fee=${fee}`, { method: "POST" });
-        setActionResult({ plate: cleaned, action: "salida", fee });
-      }
-      fetchData();
-    } catch (e) {
-      alert("Error local");
-    } finally {
-      setIsCameraOpen(false);
-      setTimeout(() => setActionResult(null), 4000);
-    }
-  };
+// ─── Login page ───────────────────────────────────────────────────────────────
 
-  const capture = useCallback(async () => {
-    if (!webcamRef.current) return;
-    setIsAnalyzing(true);
-    const img = webcamRef.current.getScreenshot();
-    if (!img) { setIsAnalyzing(false); return; }
-    try {
-      const blob = await (await fetch(img)).blob();
-      const fd = new FormData();
-      fd.append("image", blob, 'p.jpg');
-      const res = await fetch(`${API_BASE}/api/detect`, { method: "POST", body: fd });
-      const data = await res.json();
-      if (data.plate && data.plate !== "None") processPlate(data.plate, cameraMode);
-      else alert("No detectado");
-    } catch (e) {
-      alert("AI offline");
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [webcamRef, cameraMode, processPlate]);
+function LoginPage({ onLogin }: { onLogin: (auth: AuthState) => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw]     = useState(false);
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
 
-  const clearRecords = async () => {
-    if (!confirm("Borrar historial?")) return;
-    await fetch(`${API_BASE}/api/clear-history`, { method: "POST" });
-    fetchData();
-  };
-
-  const uploadVideoFile = async (file: File) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    setUploading(true);
-    setVideoResults([]);
-    try {
-      const res = await fetch(`${API_BASE}/api/video/upload`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error("Upload failed");
-      const data = await res.json();
-      if (data.video_id) {
-        setProcessingVideoId(data.video_id);
-        pollVideo(data.video_id);
-      }
-    } catch(e) {
-      alert("Error procesando video. Asegúrate de que el backend local esté corriendo.");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      await uploadVideoFile(file);
-      e.target.value = '';
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!uploading && !processingVideoId) setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (!uploading && !processingVideoId) {
-      const file = e.dataTransfer.files?.[0];
-      if (file) {
-        uploadVideoFile(file);
-      }
-    }
-  };
-
-  const pollVideo = async (videoId: string) => {
+    setLoading(true); setError("");
     try {
-      const res = await fetch(`${API_BASE}/api/video/results/${videoId}`);
-      if (!res.ok) {
-        setTimeout(() => pollVideo(videoId), 3000);
-        return;
-      }
-      const data = await res.json();
-      if (data.status === "completed") {
-        setVideoResults(data.data);
-        setProcessingVideoId(null);
-      } else {
-        setTimeout(() => pollVideo(videoId), 3000);
-      }
-    } catch(e) {
-      setTimeout(() => pollVideo(videoId), 3000);
-    }
+      const r = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!r.ok) { setError("Usuario o contraseña incorrectos"); return; }
+      const data = await r.json();
+      const auth = { token: data.access_token, username: data.username, role: data.role };
+      setAuth(auth);
+      onLogin(auth);
+    } catch { setError("Error de conexión con el servidor"); }
+    finally { setLoading(false); }
   };
 
   return (
-    <div className={`min-h-screen selection:bg-indigo-500 selection:text-white transition-colors duration-300 font-sans ${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
-      
-      {/* Header - Fixed & Self Contained */}
-      <header className={`sticky top-0 z-50 w-full border-b backdrop-blur-md px-6 py-4 flex items-center justify-between overflow-hidden shadow-sm ${isDarkMode ? 'bg-slate-900/90 border-white/5' : 'bg-white/90 border-slate-200 text-slate-950'}`}>
-        <div className="flex items-center gap-2 truncate max-w-[40%]">
-           <div className="shrink-0 p-2 rounded-lg bg-indigo-600 text-white"><Car size={18}/></div>
-           <span className="font-bold whitespace-nowrap hidden sm:block">CParking</span>
+    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm p-8">
+        <div className="flex flex-col items-center gap-3 mb-8">
+          <div className="bg-indigo-600 rounded-2xl p-3">
+            <Car size={32} className="text-white" />
+          </div>
+          <h1 className="text-2xl font-black text-slate-900">CentralParking</h1>
+          <p className="text-sm text-slate-400">Ingresá con tu cuenta</p>
         </div>
-        
-        <nav className="flex bg-black/10 dark:bg-white/5 p-1 rounded-xl border border-white/5 shrink-0 overflow-hidden">
-           {["actions", "monitor", "video", "stats"].map(t => (
-             <button key={t} onClick={() => setActiveTab(t as any)} className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all whitespace-nowrap ${activeTab === t ? 'bg-indigo-600 text-white shadow-md' : 'opacity-40 hover:opacity-100'}`}>
-               {t === 'actions' ? 'Control' : t === 'monitor' ? 'Mapa' : t === 'video' ? 'Videos' : 'Cierre'}
-             </button>
-           ))}
-        </nav>
 
-        <button onClick={toggleTheme} className="shrink-0 p-2 opacity-60 hover:opacity-100 transition-transform active:scale-90">
-          {isDarkMode ? <Sun size={18}/> : <Moon size={18}/>}
-        </button>
-      </header>
-
-      <main className="w-full max-w-2xl mx-auto px-4 py-8 space-y-8 overflow-x-hidden">
-        
-        {activeTab === "actions" && (
-          <div className="space-y-8 animate-in fade-in slide-in-from-top-4 duration-500">
-            
-            {/* Primary Action Buttons - Flexible Grid */}
-            <div className="grid grid-cols-2 gap-4">
-               <button onClick={() => { setCameraMode("entry"); setIsCameraOpen(true); }} className={`p-6 sm:p-10 rounded-[2.5rem] border-2 flex flex-col items-center gap-4 transition-all shadow-xl hover:shadow-2xl active:scale-95 ${isDarkMode ? 'bg-emerald-500/5 border-emerald-500/10' : 'bg-emerald-50 border-emerald-100'}`}>
-                 <div className="p-4 sm:p-5 rounded-full bg-emerald-500 text-white shadow-lg"><LogIn size={24} className="sm:w-8 sm:h-8" /></div>
-                 <span className="font-bold text-[10px] sm:text-xs uppercase tracking-widest text-emerald-500">ENTRADA</span>
-               </button>
-               <button onClick={() => { setCameraMode("exit"); setIsCameraOpen(true); }} className={`p-6 sm:p-10 rounded-[2.5rem] border-2 flex flex-col items-center gap-4 transition-all shadow-xl hover:shadow-2xl active:scale-95 ${isDarkMode ? 'bg-indigo-500/5 border-indigo-500/10' : 'bg-indigo-50 border-indigo-100'}`}>
-                 <div className="p-4 sm:p-5 rounded-full bg-indigo-600 text-white shadow-lg"><LogOut size={24} className="sm:w-8 sm:h-8" /></div>
-                 <span className="font-bold text-[10px] sm:text-xs uppercase tracking-widest text-indigo-500">SALIDA</span>
-               </button>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">
+              Usuario
+            </label>
+            <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2.5 focus-within:border-indigo-400 transition-colors">
+              <User size={16} className="text-slate-400 shrink-0" />
+              <input
+                type="text" value={username} onChange={e => setUsername(e.target.value)}
+                placeholder="admin" autoComplete="username" required
+                className="flex-1 outline-none text-sm font-semibold text-slate-800 bg-transparent placeholder:text-slate-300"
+              />
             </div>
+          </div>
 
-            {/* Event Setup Card */}
-            <div className={`p-6 rounded-[2.5rem] border overflow-hidden ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-200'}`}>
-               <div className="flex items-center gap-2 mb-4 opacity-40">
-                  <Activity size={14} />
-                  <h3 className="text-[10px] font-bold uppercase tracking-[0.2em]">Tarifa de Ingreso</h3>
-               </div>
-               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {EVENT_FEES.map(f => (
-                    <button key={f.id} onClick={() => setSelectedEvent(f)} className={`py-3 px-1 rounded-xl text-[9px] font-bold uppercase border-2 transition-all truncate ${selectedEvent.id === f.id ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' : 'border-transparent bg-slate-500/5 opacity-40'}`}>
-                      {f.name} {f.amount ? `(${f.amount/1000}k)` : ''}
-                    </button>
-                  ))}
-               </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-1.5">
+              Contraseña
+            </label>
+            <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2.5 focus-within:border-indigo-400 transition-colors">
+              <LogIn size={16} className="text-slate-400 shrink-0" />
+              <input
+                type={showPw ? "text" : "password"} value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••" autoComplete="current-password" required
+                className="flex-1 outline-none text-sm font-semibold text-slate-800 bg-transparent placeholder:text-slate-300"
+              />
+              <button type="button" onClick={() => setShowPw(!showPw)} className="text-slate-300 hover:text-slate-500">
+                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
             </div>
-
-            {/* Results Banner */}
-            {actionResult && (
-              <div className={`p-8 rounded-[3rem] border-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-2xl animate-in zoom-in-95 duration-500 ${actionResult.action === 'entrada' ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-indigo-600/5 border-indigo-600/30'}`}>
-                <div className="flex items-center gap-4">
-                  <span className="text-3xl sm:text-4xl font-mono font-black tracking-widest break-all">{actionResult.plate}</span>
-                  <div className="bg-white/10 px-3 py-1 rounded-xl text-[10px] uppercase font-black">{actionResult.action}</div>
-                </div>
-                {actionResult.fee !== undefined && <span className="text-4xl font-black tabular-nums font-mono">${actionResult.fee.toLocaleString()}</span>}
-              </div>
-            )}
-
-            {/* Minimal Dashboard */}
-            <div className="grid grid-cols-3 gap-3">
-               {[
-                 { label: 'Ingresos', val: `$${stats.today_income.toLocaleString()}`, color: 'text-indigo-500' },
-                 { label: 'Plantel', val: stats.parked_now, color: 'text-slate-100' },
-                 { label: 'Movimientos', val: stats.today_entries, color: 'text-slate-100' }
-               ].map((item, idx) => (
-                 <div key={idx} className={`p-4 rounded-3xl border text-center ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
-                    <div className={`text-xl sm:text-2xl font-black tabular-nums ${item.color.replace('text-slate-100', isDarkMode ? 'text-slate-100' : 'text-slate-900')}`}>{item.val}</div>
-                    <div className="text-[8px] font-bold opacity-30 uppercase tracking-widest mt-1">{item.label}</div>
-                 </div>
-               ))}
-            </div>
-
           </div>
-        )}
 
-        {activeTab === "monitor" && (
-           <div className="grid grid-cols-1 gap-4 animate-in slide-in-from-right-10 pb-20 overflow-visible">
-              {Object.values(cars).length === 0 && (
-                <div className="py-20 text-center opacity-20 flex flex-col items-center gap-4">
-                  <Car size={48} />
-                  <p className="font-bold text-[10px] uppercase tracking-widest leading-loose text-center">Sin vehículos registrados</p>
-                </div>
-              )}
-              {Object.values(cars).map(c => {
-                const fee = calculateFee(c.entryTime, Date.now(), c.isEvent, c.eventFee);
-                const elapsedMins = Math.floor((Date.now() - c.entryTime) / 60000);
-                const progress = Math.min(100, (elapsedMins / 240) * 100); 
-                
-                return (
-                  <div key={c.plate} className={`p-6 rounded-[2.5rem] border-2 transition-all ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-200 shadow-xl'}`}>
-                    <div className="flex justify-between items-center mb-6 gap-2">
-                       <span className="font-black text-2xl sm:text-3xl font-mono tracking-tight underline decoration-indigo-600 decoration-2 underline-offset-8 truncate">{c.plate}</span>
-                       <div className="flex items-center gap-1 shrink-0">
-                          <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-lg ${c.isEvent ? 'bg-purple-600' : 'bg-indigo-600'} text-white shadow-lg shadow-indigo-500/10`}>{c.isEvent ? 'Ev' : 'Nm'}</span>
-                          <button onClick={() => { if(confirm(`Eliminar ${c.plate}?`)) fetch(`${API_BASE}/api/cars/${c.plate}`, {method: 'DELETE'}).then(fetchData) }} className="p-2 text-red-500/30 hover:text-red-500 transition-all"><Trash2 size={16}/></button>
-                       </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4 mb-6">
-                       <div className="flex items-center gap-3">
-                          <Clock size={16} className="text-indigo-500 opacity-40 shrink-0"/>
-                          <div className="truncate"><p className="text-[8px] font-bold opacity-30 uppercase">Entrada</p><p className="font-bold text-sm">{format(c.entryTime, 'HH:mm')}</p></div>
-                       </div>
-                       <div className="text-right truncate">
-                          <p className="text-[8px] font-bold opacity-30 uppercase">Actual</p>
-                          <p className="font-bold text-2xl text-indigo-500 tabular-nums font-mono">${fee.toLocaleString()}</p>
-                       </div>
-                    </div>
+          {error && <p className="text-sm text-rose-500 font-semibold text-center">{error}</p>}
 
-                    {!c.isEvent && (
-                      <div className="space-y-3 mb-6">
-                        <div className="flex justify-between text-[9px] font-black uppercase tracking-widest opacity-30">
-                           <span className="flex items-center gap-1"><Activity size={10}/> Estancia</span>
-                           <span className="tabular-nums font-mono">{elapsedMins} / 240m</span>
-                        </div>
-                        <div className="h-2.5 bg-black/10 dark:bg-white/5 rounded-full overflow-hidden border border-white/5 shadow-inner">
-                           <div className={`h-full transition-all duration-1000 ${progress > 90 ? 'bg-red-500 animate-pulse' : progress > 70 ? 'bg-yellow-500' : 'bg-emerald-500'}`} style={{ width: `${progress}%` }} />
-                        </div>
-                      </div>
-                    )}
+          <button type="submit" disabled={loading}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-black py-3 rounded-xl transition-colors text-sm">
+            {loading ? "Ingresando..." : "Ingresar"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
-                    <button onClick={() => processPlate(c.plate, 'exit')} className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-black text-xs uppercase tracking-[0.2em] shadow-lg shadow-indigo-600/30 active:scale-95 transition-all">TERMINAR</button>
-                  </div>
-                );
-              })}
-           </div>
-        )}
+// ─── Shared components ────────────────────────────────────────────────────────
 
-        {activeTab === "video" && (
-           <div className="space-y-8 animate-in slide-in-from-bottom-4 pb-20 overflow-visible">
-              <div 
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                className={`p-8 rounded-[2.5rem] border-4 border-dashed text-center transition-all shadow-xl ${isDarkMode ? 'bg-slate-900 border-white/10' : 'bg-white border-slate-200'} ${isDragging ? 'border-indigo-500 bg-indigo-500/10 scale-105' : ''}`}
-              >
-                 <input type="file" id="video-upload" accept="video/mp4,video/x-m4v,video/*,video/avi" className="hidden" onChange={handleFileUpload} disabled={uploading || !!processingVideoId} />
-                 
-                 {processingVideoId ? (
-                   <div className="flex flex-col items-center gap-6 py-6">
-                     <RefreshCw size={48} className="text-indigo-500 animate-spin" />
-                     <div>
-                       <h3 className="font-black text-xl mb-2">Procesando Video</h3>
-                       <p className="text-xs font-bold uppercase tracking-widest opacity-40">Extrayendo patentes con IA local...</p>
-                     </div>
-                   </div>
-                 ) : (
-                   <label htmlFor="video-upload" className={`cursor-pointer flex flex-col items-center gap-6 py-10 transition-all ${uploading ? 'opacity-50' : 'hover:scale-105 active:scale-95'}`}>
-                      <div className="w-24 h-24 rounded-full bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
-                         {uploading ? <RefreshCw size={40} className="animate-spin" /> : <UploadCloud size={40} />}
-                      </div>
-                      <div>
-                        <h3 className="font-black text-xl mb-2">Subir Video CCTV</h3>
-                        <p className="text-xs font-bold uppercase tracking-widest opacity-40 text-indigo-500">MP4, AVI, MOV (Procesamiento Batch)</p>
-                      </div>
-                   </label>
-                 )}
-              </div>
+function PhotoThumb({ url, plate, size = "sm" }: { url: string | null; plate: string; size?: "sm" | "lg" }) {
+  const [open, setOpen] = useState(false);
+  const cls = size === "lg"
+    ? "w-20 h-14 lg:w-24 lg:h-16"
+    : "w-14 h-10";
 
-              {videoResults.length > 0 && (
-                <div className="space-y-4">
-                   <div className="flex items-center gap-2 opacity-40 px-2">
-                     <FileSpreadsheet size={16} />
-                     <h3 className="text-[10px] font-black uppercase tracking-[0.2em]">Resultados Extraídos</h3>
-                   </div>
-                   <div className="space-y-3">
-                     {videoResults.map((r, i) => (
-                        <div key={i} className={`p-5 rounded-2xl border flex items-center justify-between gap-4 ${isDarkMode ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
-                           <div className="flex items-center gap-4">
-                              <span className="text-[10px] font-bold opacity-30 font-mono tracking-widest">{r.Timestamp?.split(' ')[1] || '00:00'}</span>
-                              <span className="text-xl font-black font-mono tracking-widest">{r.Plate}</span>
-                           </div>
-                           <div className="px-3 py-1 rounded-lg bg-emerald-500/10 text-emerald-500 text-[8px] font-black uppercase tracking-widest">
-                             {parseFloat(r.Confidence || '0').toFixed(2)} conf
-                           </div>
-                        </div>
-                     ))}
-                   </div>
-                </div>
-              )}
-           </div>
-        )}
-
-        {activeTab === "stats" && (
-           <div className="space-y-8 animate-in zoom-in-95 pt-4 pb-16 overflow-visible">
-              {/* Daily Hero - Fluid sizing */}
-              <div className={`p-10 sm:p-14 rounded-[3.5rem] border-4 text-center relative overflow-hidden ${isDarkMode ? 'bg-slate-900 border-indigo-600/10 shadow-2xl' : 'bg-white border-slate-100 shadow-xl'}`}>
-                 <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-600/10 blur-[50px] rounded-full -mr-10 -mt-10" />
-                 <h2 className="text-[10px] font-black uppercase opacity-20 mb-6 tracking-[0.3em]">Cierre Diario</h2>
-                 <div className="text-5xl sm:text-7xl font-black text-indigo-500 tracking-tighter tabular-nums font-mono overflow-hidden truncate px-2">${stats.today_income.toLocaleString()}</div>
-                 <div className="flex justify-center gap-8 mt-10 border-t border-white/10 pt-10">
-                    <div className="truncate"><p className="text-2xl font-black tabular-nums">{stats.today_entries}</p><p className="text-[8px] font-bold opacity-30 mt-1 uppercase tracking-widest whitespace-nowrap">Ingresos</p></div>
-                    <div className="truncate"><p className="text-2xl font-black tabular-nums">{stats.today_exits}</p><p className="text-[8px] font-bold opacity-30 mt-1 uppercase tracking-widest whitespace-nowrap">Salidas</p></div>
-                 </div>
-              </div>
-
-              {/* Enhanced History - Container Bound */}
-              <div className="space-y-4 max-w-full">
-                 <div className="flex items-center justify-between px-2 gap-2">
-                    <div className="flex items-center gap-2 truncate opacity-30">
-                       <ListOrdered size={16} className="text-indigo-500 shrink-0"/>
-                       <h3 className="text-[10px] font-black uppercase tracking-[0.2em] truncate">Ultimos Registros</h3>
-                    </div>
-                    <button onClick={clearRecords} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-500 text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
-                       <Eraser size={12}/> Limpiar
-                    </button>
-                 </div>
-                 
-                 <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1 scrollbar-none custom-scroll overflow-x-hidden">
-                    {history.length === 0 && <p className="text-center py-10 opacity-20 text-[10px] font-bold uppercase tracking-widest">Lista Vacía</p>}
-                    {history.map((r, i) => (
-                      <div key={i} className={`p-4 rounded-2xl border flex items-center justify-between transition-all gap-4 overflow-hidden ${isDarkMode ? 'bg-slate-900 border-white/5 hover:bg-white/5' : 'bg-white border-slate-100 shadow-sm'}`}>
-                         <div className="flex items-center gap-3 overflow-hidden">
-                            <span className="text-[8px] font-bold opacity-20 tabular-nums shrink-0 font-mono hidden sm:block">{r[0]?.split(' ')[1]}</span>
-                            <span className="text-base sm:text-lg font-black tracking-tight tabular-nums font-mono truncate">{r[1]}</span>
-                            <span className={`px-2 py-0.5 rounded-md text-[7px] font-black uppercase shrink-0 ${r[2]==='ENTRY'?'bg-emerald-500/10 text-emerald-500':'bg-indigo-500/10 text-indigo-500'}`}>{r[2]}</span>
-                         </div>
-                         <div className="text-right shrink-0">
-                            <span className="text-sm font-black tabular-nums font-mono text-indigo-500">${parseFloat(r[4]||0).toLocaleString()}</span>
-                         </div>
-                      </div>
-                    ))}
-                 </div>
-              </div>
-           </div>
-        )}
-      </main>
-
-      {/* Camera Interface - Bound Viewport */}
-      {isCameraOpen && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-4 sm:p-10 transition-all">
-          <div className="w-full max-w-lg aspect-square relative rounded-[2.5rem] overflow-hidden border-4 border-white/10 shadow-2xl">
-             <Webcam audio={false} ref={webcamRef} screenshotFormat="image/jpeg" videoConstraints={{ facingMode: "environment" }} className="h-full w-full object-cover" />
-             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-[85%] aspect-[3/1.2] border-2 border-emerald-400 rounded-3xl relative">
-                   <div className="absolute top-1/2 left-0 w-full h-[0.5px] bg-emerald-400 animate-pulse" />
-                   {/* Corners */}
-                   <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl" />
-                   <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-emerald-400 rounded-br-xl" />
-                </div>
-             </div>
-             {isAnalyzing && (
-                <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-4">
-                   <RefreshCw className="text-white animate-spin" size={48}/>
-                   <span className="text-white font-bold text-[10px] uppercase tracking-[0.5em]">AI Analizando</span>
-                </div>
-             )}
+  if (!url) return (
+    <div className={`${cls} rounded-xl bg-slate-100 flex items-center justify-center shrink-0`}>
+      <ImageIcon size={size === "lg" ? 20 : 15} className="text-slate-300" />
+    </div>
+  );
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="shrink-0">
+        <img src={url} alt={plate} loading="lazy"
+          className={`${cls} object-cover rounded-xl border border-slate-200 hover:scale-105 transition-transform cursor-zoom-in`} />
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setOpen(false)}>
+          <div className="relative max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setOpen(false)}
+              className="absolute -top-4 -right-4 bg-white rounded-full p-1.5 shadow-lg z-10">
+              <X size={18} />
+            </button>
+            <img src={url} alt={plate} className="w-full rounded-2xl shadow-2xl" />
+            <p className="text-center text-white font-black text-2xl mt-4 tracking-widest font-mono">{plate}</p>
           </div>
-          
-          <div className="mt-8 flex gap-6 items-center">
-             <button onClick={() => setIsCameraOpen(false)} className="w-14 h-14 rounded-2xl bg-white/5 text-white flex items-center justify-center active:scale-90 border border-white/5"><X size={24}/></button>
-             <button onClick={capture} disabled={isAnalyzing} className="w-24 h-24 rounded-full border-4 border-indigo-600/20 p-1 flex items-center justify-center transition-all bg-white active:scale-95 shadow-xl">
-                <div className="w-18 h-18 rounded-full bg-indigo-600 flex items-center justify-center text-white"><Check size={40}/></div>
-             </button>
-             <button onClick={() => setShowManualInput(!showManualInput)} className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all border border-white/5 ${showManualInput ? 'bg-indigo-600 border-indigo-500' : 'bg-white/5'} text-white active:scale-90`}><Search size={24}/></button>
-          </div>
-          
-          {showManualInput && (
-             <div className="mt-8 w-full max-w-sm animate-in fade-in zoom-in-95 duration-300">
-                <form onSubmit={(e) => { e.preventDefault(); processPlate(manualPlate.toUpperCase().trim(), cameraMode); setShowManualInput(false); setManualPlate(""); }} className="bg-white p-2 rounded-2xl flex shadow-2xl">
-                   <input autoFocus type="text" value={manualPlate} onChange={e => setManualPlate(e.target.value)} placeholder="ABC123" className="flex-1 bg-slate-50 p-4 rounded-xl font-mono font-black text-xl text-black outline-none uppercase tracking-[0.1em]" />
-                   <button type="submit" className="bg-slate-900 text-white w-16 rounded-xl flex items-center justify-center ml-2 shrink-0"><Check size={28}/></button>
-                </form>
-             </div>
-          )}
         </div>
       )}
+    </>
+  );
+}
 
-      <style jsx global>{`
-        input::placeholder { color: #ccc; }
-        .scrollbar-none::-webkit-scrollbar { display: none; }
-        .custom-scroll { scroll-behavior: smooth; }
-        * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-        /* Prevent overflow globally */
-        body { overflow-x: hidden; width: 100vw; }
-      `}</style>
+function ActionBadge({ action }: { action: string }) {
+  const styles: Record<string, string> = {
+    ENTRY: "bg-emerald-100 text-emerald-700", EXIT: "bg-rose-100 text-rose-700",
+    VOID: "bg-slate-100 text-slate-500", DETECTION: "bg-sky-100 text-sky-700",
+  };
+  const labels: Record<string, string> = {
+    ENTRY: "Entrada", EXIT: "Salida", VOID: "Anulado", DETECTION: "Detección",
+  };
+  return (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${styles[action] ?? "bg-slate-100 text-slate-500"}`}>
+      {labels[action] ?? action}
+    </span>
+  );
+}
+
+function StatCard({ label, value, sub, accent = "text-slate-900" }: {
+  label: string; value: string | number; sub?: string; accent?: string;
+}) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-4 lg:p-5">
+      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{label}</p>
+      <p className={`text-3xl lg:text-4xl font-black tabular-nums mt-1 ${accent}`}>{value}</p>
+      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Feed row (shared by Dashboard and Historial) ─────────────────────────────
+
+function FeedRow({ r, showDate = false }: { r: HistoryEntry; showDate?: boolean }) {
+  const today = format(new Date(), "yyyy-MM-dd");
+  return (
+    <div className="flex items-center gap-3 lg:gap-4 px-4 lg:px-5 py-3 lg:py-4">
+      <PhotoThumb url={r.image_url} plate={r.plate} size="lg" />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-black text-slate-900 tracking-widest text-base lg:text-xl font-mono">
+            {r.plate}
+          </span>
+          <ActionBadge action={r.action} />
+          {r.status && r.status !== "REAL" && (
+            <span className="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded hidden sm:inline">
+              {r.status}
+            </span>
+          )}
+        </div>
+        <p className="text-sm lg:text-base text-slate-400 font-mono mt-0.5">
+          {(showDate || r.timestamp.split(" ")[0] !== today) && (
+            <span className="text-slate-300 mr-1.5">{r.timestamp.split(" ")[0]}</span>
+          )}
+          {r.timestamp.split(" ")[1]}
+        </p>
+      </div>
+      {r.fee > 0 && (
+        <span className="text-base lg:text-lg font-bold text-slate-700 tabular-nums shrink-0">
+          ${r.fee.toLocaleString("es-CL")}
+        </span>
+      )}
+      <span className="text-xs text-slate-300 tabular-nums shrink-0 hidden md:block w-10 text-right">
+        {(r.confidence * 100).toFixed(0)}%
+      </span>
+    </div>
+  );
+}
+
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+
+function Dashboard({ stats, history, loading }: { stats: Stats; history: HistoryEntry[]; loading: boolean }) {
+  return (
+    <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-[300px_1fr] lg:gap-6">
+
+      {/* Left: stats */}
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard label="Entradas hoy"  value={stats.today_entries} accent="text-emerald-600" />
+          <StatCard label="Salidas hoy"   value={stats.today_exits}   accent="text-rose-600" />
+          <StatCard label="En parking"    value={stats.parked_now}    accent="text-indigo-600" />
+          <StatCard label="Recaudado"
+            value={`$${stats.today_income.toLocaleString("es-CL")}`} accent="text-amber-600" />
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 hidden lg:block">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Estado</p>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-slate-500">Cámara</span>
+              <span className="font-bold text-emerald-600">● Activa</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Staging</span>
+              <span className="font-bold text-emerald-600">● Activo</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Actualización</span>
+              <span className="font-bold text-slate-400">cada 15s</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right: feed */}
+      <div className="bg-white rounded-2xl border border-slate-200 lg:overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+          <h2 className="font-bold text-slate-700">Feed en vivo</h2>
+          {loading && <RefreshCw size={15} className="animate-spin text-slate-400" />}
+        </div>
+        <div className="divide-y divide-slate-50 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
+          {history.slice(0, 50).map((r, i) => <FeedRow key={i} r={r} />)}
+          {history.length === 0 && !loading && (
+            <p className="text-center text-slate-400 py-16">Sin actividad registrada</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Historial ────────────────────────────────────────────────────────────────
+
+function Historial() {
+  const [date, setDate]     = useState(() => format(new Date(), "yyyy-MM-dd"));
+  const [filter, setFilter] = useState<"ALL" | "ENTRY" | "EXIT">("ALL");
+  const [rows, setRows]     = useState<HistoryEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch(`${API}/api/history?limit=2000`);
+      if (r.ok) setRows((await r.json()).filter((e: HistoryEntry) => e.timestamp.startsWith(date)));
+    } finally { setLoading(false); }
+  }, [date]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const visible = filter === "ALL" ? rows : rows.filter(r => r.action === filter);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        {/* Nav fecha */}
+        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden shrink-0">
+          <button onClick={() => setDate(format(subDays(parseISO(date), 1), "yyyy-MM-dd"))}
+            className="p-2.5 hover:bg-slate-50 text-slate-400 hover:text-slate-700 transition-colors">
+            <ChevronLeft size={16} />
+          </button>
+          <div className="flex items-center gap-1.5 px-1">
+            <Calendar size={14} className="text-slate-400" />
+            <input type="date" value={date} onChange={e => setDate(e.target.value)}
+              className="text-sm font-semibold text-slate-700 outline-none bg-transparent w-32 lg:w-36" />
+          </div>
+          <button onClick={() => setDate(format(addDays(parseISO(date), 1), "yyyy-MM-dd"))}
+            disabled={isToday(parseISO(date))}
+            className="p-2.5 hover:bg-slate-50 text-slate-400 hover:text-slate-700 disabled:opacity-30 transition-colors">
+            <ChevronRight size={16} />
+          </button>
+        </div>
+        {/* Filtro */}
+        <div className="flex rounded-xl overflow-hidden border border-slate-200 bg-white shrink-0">
+          {(["ALL", "ENTRY", "EXIT"] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`px-3 lg:px-4 py-2.5 text-xs lg:text-sm font-bold transition-colors ${filter === f ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>
+              {f === "ALL" ? "Todos" : f === "ENTRY" ? "Entradas" : "Salidas"}
+            </button>
+          ))}
+        </div>
+        <button onClick={load} className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50">
+          <RefreshCw size={15} className={`text-slate-500 ${loading ? "animate-spin" : ""}`} />
+        </button>
+        {visible.length > 0 && (
+          <span className="ml-auto text-xs text-slate-400">{visible.length} registros</span>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="divide-y divide-slate-50">
+          {visible.map((r, i) => <FeedRow key={i} r={r} showDate />)}
+          {visible.length === 0 && !loading && (
+            <p className="text-center text-slate-400 py-16">Sin registros para {date}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Reconciliación ───────────────────────────────────────────────────────────
+
+function Reconciliacion() {
+  const [date, setDate]           = useState(() => format(new Date(), "yyyy-MM-dd"));
+  const [result, setResult]       = useState<ReconcileResult | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
+  const [detailTab, setDetailTab] = useState<"camera_only" | "matched" | "excel_only">("camera_only");
+  const [lastImport, setLastImport] = useState<{ id: number; filename: string } | null>(null);
+  const [dragOver, setDragOver]   = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const r = await apiFetch(`${API}/api/excel/upload`, { method: "POST", body: fd });
+      if (!r.ok) { alert((await r.json()).detail); return; }
+      const data = await r.json();
+      setLastImport({ id: data.import_id, filename: data.filename });
+      if (data.date_from) setDate(data.date_from);
+    } finally { setUploading(false); }
+  };
+
+  const reconcile = async () => {
+    setReconciling(true);
+    try {
+      const p = new URLSearchParams({ date });
+      if (lastImport) p.set("import_id", String(lastImport.id));
+      const r = await apiFetch(`${API}/api/excel/reconcile?${p}`);
+      if (r.ok) setResult(await r.json());
+    } finally { setReconciling(false); }
+  };
+
+  const s = result?.summary;
+
+  return (
+    <div className="space-y-5">
+      <div
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) uploadFile(f); }}
+        onClick={() => fileRef.current?.click()}
+        className={`border-2 border-dashed rounded-2xl p-8 lg:p-10 flex flex-col items-center gap-3 cursor-pointer transition-colors
+          ${dragOver ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50"}`}
+      >
+        <Upload size={32} className={uploading ? "animate-bounce text-indigo-500" : "text-slate-400"} />
+        <div className="text-center">
+          <p className="font-semibold text-slate-600">
+            {uploading ? "Subiendo..." : "Arrastrá el Excel aquí o hacé click"}
+          </p>
+          {lastImport
+            ? <p className="text-sm text-indigo-600 mt-1 font-semibold">✓ {lastImport.filename}</p>
+            : <p className="text-sm text-slate-400 mt-1">ventas_DD-MM-YYYY HH_MM_SS.xlsx</p>
+          }
+        </div>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f); }} />
+      </div>
+
+      <div className="flex gap-3">
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2.5 flex-1">
+          <Calendar size={15} className="text-slate-400 shrink-0" />
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            className="text-sm font-semibold text-slate-700 outline-none bg-transparent w-full" />
+        </div>
+        <button onClick={reconcile} disabled={reconciling || uploading}
+          className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold px-6 rounded-xl text-sm transition-colors">
+          {reconciling ? "Comparando..." : "Comparar"}
+        </button>
+      </div>
+
+      {s && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-2 lg:gap-4">
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3 lg:p-5">
+              <p className="text-[10px] lg:text-xs font-bold text-rose-500 uppercase tracking-widest">Solo cámara</p>
+              <p className="text-2xl lg:text-4xl font-black text-rose-600 mt-1">{s.camera_only}</p>
+              <p className="text-[10px] lg:text-xs text-rose-400 mt-1 hidden sm:block">operador no registró</p>
+            </div>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 lg:p-5">
+              <p className="text-[10px] lg:text-xs font-bold text-emerald-600 uppercase tracking-widest">Coinciden</p>
+              <p className="text-2xl lg:text-4xl font-black text-emerald-700 mt-1">{s.matched}</p>
+              <p className="text-[10px] lg:text-xs text-emerald-500 mt-1 hidden sm:block">${s.excel_revenue.toLocaleString("es-CL")}</p>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 lg:p-5">
+              <p className="text-[10px] lg:text-xs font-bold text-amber-600 uppercase tracking-widest">Solo Excel</p>
+              <p className="text-2xl lg:text-4xl font-black text-amber-700 mt-1">{s.excel_only}</p>
+              <p className="text-[10px] lg:text-xs text-amber-500 mt-1 hidden sm:block">cámara no detectó</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="flex border-b border-slate-100">
+              {([
+                ["camera_only", "🔴 Solo cámara", "🔴"],
+                ["matched",     "✅ Coinciden",   "✅"],
+                ["excel_only",  "🟡 Solo Excel",  "🟡"],
+              ] as const).map(([t, label, icon]) => (
+                <button key={t} onClick={() => setDetailTab(t)}
+                  className={`flex-1 py-3 lg:py-4 text-xs lg:text-sm font-bold transition-colors ${detailTab === t ? "bg-slate-50 text-slate-900 border-b-2 border-indigo-500" : "text-slate-400 hover:text-slate-600"}`}>
+                  <span className="hidden sm:inline">{label}</span>
+                  <span className="sm:hidden">{icon}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="divide-y divide-slate-50 max-h-[480px] lg:max-h-[560px] overflow-y-auto">
+              {detailTab === "camera_only" && result!.camera_only.map((r, i) => (
+                <div key={i} className="flex items-center gap-3 lg:gap-4 px-4 lg:px-5 py-3 lg:py-4">
+                  <PhotoThumb url={r.image_url} plate={r.plate} size="lg" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black text-slate-900 tracking-widest text-base lg:text-xl font-mono">{r.plate}</p>
+                    <p className="text-sm text-slate-400">{r.camera_time} · {(r.confidence * 100).toFixed(0)}% conf</p>
+                  </div>
+                  <AlertTriangle size={18} className="text-rose-400 shrink-0" />
+                </div>
+              ))}
+
+              {detailTab === "matched" && result!.matched.map((r, i) => (
+                <div key={i} className="flex items-center gap-3 lg:gap-4 px-4 lg:px-5 py-3 lg:py-4">
+                  <PhotoThumb url={r.image_url} plate={r.plate} size="lg" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black text-slate-900 tracking-widest text-base lg:text-xl font-mono">{r.plate}</p>
+                    <p className="text-sm text-slate-400">
+                      cámara {r.camera_time} · Excel {r.excel_ingreso} · Δ{r.diff_minutes}min · {r.operador}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-bold text-emerald-600 lg:text-lg">${r.valor.toLocaleString("es-CL")}</p>
+                    <CheckCircle2 size={14} className="text-emerald-400 ml-auto mt-0.5" />
+                  </div>
+                </div>
+              ))}
+
+              {detailTab === "excel_only" && result!.excel_only.map((r, i) => (
+                <div key={i} className="flex items-center gap-3 lg:gap-4 px-4 lg:px-5 py-3 lg:py-4">
+                  <div className="w-20 h-14 lg:w-24 lg:h-16 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
+                    <HelpCircle size={20} className="text-amber-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black text-slate-900 tracking-widest text-base lg:text-xl font-mono">{r.plate}</p>
+                    <p className="text-sm text-slate-400">{r.excel_ingreso} → {r.excel_salida ?? "?"} · {r.operador}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-bold text-amber-600 lg:text-lg">${r.valor.toLocaleString("es-CL")}</p>
+                    <p className={`text-xs mt-0.5 ${r.estado === "Pagado" ? "text-emerald-500" : "text-rose-500"}`}>{r.estado}</p>
+                  </div>
+                </div>
+              ))}
+
+              {result![detailTab].length === 0 && (
+                <p className="text-center text-slate-400 py-12">Sin registros en esta categoría</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+
+export default function App() {
+  const [auth, setAuthState]  = useState<AuthState>(null);
+  const [tab, setTab]         = useState<"dashboard" | "historial" | "reconciliacion">("dashboard");
+  const [stats, setStats]     = useState<Stats>({ today_income: 0, today_entries: 0, today_exits: 0, parked_now: 0 });
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const today = format(new Date(), "d 'de' MMMM yyyy", { locale: es });
+
+  // Hydrate auth from localStorage
+  useEffect(() => { setAuthState(getAuth()); }, []);
+
+  const refresh = useCallback(async () => {
+    if (!getAuth()) return;
+    setLoading(true);
+    try {
+      const ts = Date.now();
+      const [s, h] = await Promise.all([
+        apiFetch(`${API}/api/stats?t=${ts}`),
+        apiFetch(`${API}/api/history?t=${ts}&limit=50`),
+      ]);
+      if (s.ok) setStats(await s.json());
+      if (h.ok) setHistory(await h.json());
+      if (s.status === 401 || h.status === 401) { setAuth(null); setAuthState(null); }
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (!auth) return;
+    refresh();
+    const id = setInterval(refresh, 15_000);
+    return () => clearInterval(id);
+  }, [auth, refresh]);
+
+  const logout = () => { setAuth(null); setAuthState(null); };
+  const handleLogin = (a: AuthState) => { setAuthState(a); };
+
+  if (!auth) return <LoginPage onLogin={handleLogin} />;
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 lg:px-8 py-3 flex items-center gap-4">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="bg-indigo-600 rounded-xl p-1.5 lg:p-2">
+              <Car size={18} className="text-white lg:hidden" />
+              <Car size={22} className="text-white hidden lg:block" />
+            </div>
+            <span className="font-black text-slate-900 text-base lg:text-lg">CentralParking</span>
+          </div>
+          <p className="text-sm text-slate-400 hidden lg:block capitalize flex-1">{today}</p>
+          <nav className="ml-auto flex gap-1 lg:gap-2">
+            {([
+              ["dashboard",      "Dashboard"],
+              ["historial",      "Historial"],
+              ["reconciliacion", "Excel"],
+            ] as const).map(([t, label]) => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-3 lg:px-4 py-1.5 lg:py-2 rounded-lg text-xs lg:text-sm font-bold transition-colors ${tab === t ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}>
+                {label}
+              </button>
+            ))}
+          </nav>
+          <button onClick={logout} title="Cerrar sesión"
+            className="ml-2 p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+            <LogOut size={18} />
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 lg:px-8 py-5 lg:py-8">
+        {tab === "dashboard"      && <Dashboard stats={stats} history={history} loading={loading} />}
+        {tab === "historial"      && <Historial />}
+        {tab === "reconciliacion" && <Reconciliacion />}
+      </main>
     </div>
   );
 }
