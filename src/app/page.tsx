@@ -42,10 +42,11 @@ export default function ParkingMVP() {
   const fetchData = async () => {
     try {
       const ts = Date.now();
+      const today = new Date().toISOString().split('T')[0];
       const [c, s, h] = await Promise.all([
         fetch(`${API_BASE}/api/cars?t=${ts}`),
         fetch(`${API_BASE}/api/stats?t=${ts}`),
-        fetch(`${API_BASE}/api/history?t=${ts}`)
+        fetch(`${API_BASE}/api/history?date=${today}&limit=200`)
       ]);
       if (c.ok) setCars(await c.json());
       if (s.ok) setStats(await s.json());
