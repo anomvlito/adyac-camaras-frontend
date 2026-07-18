@@ -9,13 +9,16 @@ import {
   ChevronLeft, ChevronRight, LogIn, LogOut, Eye, EyeOff, User,
 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "https://efforts-belts-mountain-tile.trycloudflare.com";
+const API = process.env.NEXT_PUBLIC_API_URL || "https://2.24.69.49.nip.io";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type HistoryEntry = {
-  timestamp: string; plate: string; action: string;
+  session_id: number; timestamp: string; plate: string; action: string;
   status: string; fee: number; confidence: number; image_url: string | null;
+};
+type Sighting = {
+  plate: string; timestamp: string; confidence: number; image_url: string | null;
 };
 type Stats = {
   today_income: number; today_entries: number;
@@ -139,37 +142,190 @@ function LoginPage({ onLogin }: { onLogin: (auth: AuthState) => void }) {
 
 // ─── Shared components ────────────────────────────────────────────────────────
 
-function PhotoThumb({ url, plate, size = "sm" }: { url: string | null; plate: string; size?: "sm" | "lg" }) {
+function PhotoThumb({ url, plate, status, size = "sm", editableRow, onPlateSaved }: {
+  url: string | null; plate: string; status?: string; size?: "sm" | "lg";
+  editableRow?: HistoryEntry; onPlateSaved?: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const cls = size === "lg"
     ? "w-20 h-14 lg:w-24 lg:h-16"
     : "w-14 h-10";
 
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+    setAttempt(0);
+  }, [url]);
+
   if (!url) return (
-    <div className={`${cls} rounded-xl bg-slate-100 flex items-center justify-center shrink-0`}>
-      <ImageIcon size={size === "lg" ? 20 : 15} className="text-slate-300" />
+    <div title={status === "AUTO_CLOSED" ? "Cierre automático sin captura" : "Sin imagen asociada"}
+      className={`${cls} rounded-xl bg-slate-100 flex flex-col items-center justify-center shrink-0 px-1`}>
+      <ImageIcon size={size === "lg" ? 18 : 14} className="text-slate-300" />
+      {size === "lg" && (
+        <span className="text-[8px] leading-tight text-slate-400 text-center mt-0.5">
+          {status === "AUTO_CLOSED" ? "Cierre automático" : "Sin captura"}
+        </span>
+      )}
     </div>
   );
+
+  if (failed) return (
+    <button type="button" title="Reintentar cargar imagen"
+      onClick={() => { setFailed(false); setLoaded(false); setAttempt(value => value + 1); }}
+      className={`${cls} rounded-xl bg-rose-50 border border-rose-100 flex flex-col items-center justify-center shrink-0`}>
+      <AlertTriangle size={size === "lg" ? 17 : 14} className="text-rose-400" />
+      {size === "lg" && <span className="text-[8px] text-rose-500 mt-0.5">Reintentar</span>}
+    </button>
+  );
+
   return (
     <>
-      <button onClick={() => setOpen(true)} className="shrink-0">
-        <img src={url} alt={plate} loading="lazy"
-          className={`${cls} object-cover rounded-xl border border-slate-200 hover:scale-105 transition-transform cursor-zoom-in`} />
+      <button onClick={() => loaded && setOpen(true)} className={`${cls} relative shrink-0 group`} disabled={!loaded} title="Ampliar y editar">
+        {!loaded && <span className="absolute inset-0 rounded-xl bg-slate-100 animate-pulse" aria-label="Cargando imagen" />}
+        <img key={attempt} src={url} alt={`Captura de patente ${plate}`} loading="lazy" decoding="async"
+          onLoad={() => setLoaded(true)} onError={() => setFailed(true)}
+          className={`${cls} object-cover rounded-xl border border-slate-200 group-hover:scale-105 transition-all cursor-zoom-in ${loaded ? "opacity-100" : "opacity-0"}`} />
+        {loaded && editableRow && (
+          <div className="absolute -bottom-1 -right-1 bg-indigo-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm">
+            <span className="text-[10px] leading-none">✏️</span>
+          </div>
+        )}
       </button>
       {open && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 lg:p-8"
           onClick={() => setOpen(false)}>
-          <div className="relative max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+          <div className="relative max-w-4xl w-full flex flex-col items-center" onClick={e => e.stopPropagation()}>
             <button onClick={() => setOpen(false)}
-              className="absolute -top-4 -right-4 bg-white rounded-full p-1.5 shadow-lg z-10">
-              <X size={18} />
+              className="absolute -top-4 -right-4 lg:-right-8 lg:-top-4 bg-white text-slate-900 rounded-full p-2 shadow-lg z-10 hover:scale-110 transition-transform">
+              <X size={20} />
             </button>
-            <img src={url} alt={plate} className="w-full rounded-2xl shadow-2xl" />
-            <p className="text-center text-white font-black text-2xl mt-4 tracking-widest font-mono">{plate}</p>
+            <img src={url} alt={plate} className="w-full rounded-2xl shadow-2xl mb-6 max-h-[60vh] object-contain bg-black/40" />
+
+            {editableRow ? (
+              <div className="bg-white/10 p-5 lg:p-6 rounded-3xl backdrop-blur-md border border-white/20 shadow-xl w-full max-w-xl">
+                <PlateEditor row={editableRow} onSaved={() => { setOpen(false); onPlateSaved?.(); }} />
+              </div>
+            ) : (
+              <p className="text-center text-white font-black text-3xl tracking-widest font-mono drop-shadow-lg">{plate}</p>
+            )}
           </div>
         </div>
       )}
     </>
+  );
+}
+
+function PlateEditor({ row, onSaved }: { row: HistoryEntry; onSaved?: () => void }) {
+  const [chars, setChars] = useState(() => row.plate.split(""));
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const inputs = useRef<Array<HTMLInputElement | null>>([]);
+  const slots = Math.min(8, Math.max(6, chars.length));
+
+  useEffect(() => { setChars(row.plate.split("")); setMessage(""); }, [row.plate]);
+
+  const setPlate = (value: string) => {
+    setChars(value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8).split(""));
+    setMessage("");
+  };
+
+  const changeAt = (index: number, value: string) => {
+    const clean = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const next = [...chars];
+    next[index] = clean.slice(-1);
+    setChars(next);
+    setMessage("");
+    if (clean && index < slots - 1) inputs.current[index + 1]?.focus();
+  };
+
+  const save = async () => {
+    const plate = chars.join("");
+    if (plate === row.plate || plate.length < 4) return;
+    setSaving(true); setMessage("");
+    try {
+      const response = await apiFetch(`${API}/api/history/${row.session_id}/plate`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plate }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || "No se pudo actualizar");
+      }
+      setMessage("Guardado");
+      onSaved?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Error al guardar");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="flex items-center gap-1.5 sm:gap-2" onPaste={(event) => {
+        event.preventDefault(); setPlate(event.clipboardData.getData("text"));
+      }}>
+        {Array.from({ length: slots }, (_, index) => (
+          <input key={index} ref={(element) => { inputs.current[index] = element; }}
+            value={chars[index] ?? ""} maxLength={1} inputMode="text"
+            aria-label={`Carácter ${index + 1} de la patente`}
+            onChange={(event) => changeAt(index, event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Backspace" && !chars[index] && index > 0) inputs.current[index - 1]?.focus();
+              if (event.key === "Enter") save();
+              if (event.key === "Escape") setPlate(row.plate);
+            }}
+            className="w-10 h-12 lg:w-14 lg:h-16 rounded-xl border-2 border-white/20 bg-white/90 text-center font-black font-mono text-xl lg:text-3xl uppercase focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/30 outline-none shadow-inner text-slate-800 transition-all" />
+        ))}
+      </div>
+      <div className="flex items-center justify-center gap-3 w-full">
+        {chars.join("") !== row.plate && (
+          <button type="button" onClick={() => setPlate(row.plate)}
+            className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-sm transition-colors">
+            Restaurar
+          </button>
+        )}
+        <button type="button" onClick={save}
+          disabled={saving || chars.join("") === row.plate || chars.join("").length < 4}
+          className="px-6 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 disabled:hover:bg-indigo-500 text-white font-black text-sm shadow-lg transition-all flex-1 max-w-[200px]">
+          {saving ? "Guardando..." : "Guardar Patente"}
+        </button>
+      </div>
+      {message && <span className={`text-sm font-bold ${message === "Guardado" ? "text-emerald-400" : "text-rose-400"}`}>{message}</span>}
+    </div>
+  );
+}
+
+// Las sesiones ya no reciben foto automática al abrirse/cerrarse (la cámara
+// solo loguea avistamientos, sin tocar parking_sessions — ver CLAUDE.md).
+// Por patente, se muestran las últimas fotos donde fue avistada; si aún no
+// hay avistamientos (o falla la carga) se usa la foto de la sesión si existe.
+// Cualquiera de las fotos abre el mismo editor: la corrección es a nivel de
+// sesión (row.session_id), no de la foto puntual clickeada.
+function SightingPhotos({ row, onPlateSaved }: { row: HistoryEntry; onPlateSaved?: () => void }) {
+  const [sightings, setSightings] = useState<Sighting[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch(`${API}/api/sightings/${row.plate}?limit=2`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (!cancelled && data) setSightings(data.sightings); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [row.plate]);
+
+  const urls = sightings && sightings.length > 0
+    ? sightings.map(s => s.image_url)
+    : [row.image_url];
+
+  return (
+    <div className="flex gap-1 shrink-0">
+      {urls.slice(0, 2).map((url, idx) => (
+        <PhotoThumb key={idx} url={url} plate={row.plate} status={row.status} size="sm"
+          editableRow={row} onPlateSaved={onPlateSaved} />
+      ))}
+    </div>
   );
 }
 
@@ -202,11 +358,13 @@ function StatCard({ label, value, sub, accent = "text-slate-900" }: {
 
 // ─── Feed row (shared by Dashboard and Historial) ─────────────────────────────
 
-function FeedRow({ r, showDate = false }: { r: HistoryEntry; showDate?: boolean }) {
+function FeedRow({ r, showDate = false, onPlateSaved }: {
+  r: HistoryEntry; showDate?: boolean; onPlateSaved?: () => void;
+}) {
   const today = format(new Date(), "yyyy-MM-dd");
   return (
     <div className="flex items-center gap-3 lg:gap-4 px-4 lg:px-5 py-3 lg:py-4">
-      <PhotoThumb url={r.image_url} plate={r.plate} size="lg" />
+      <SightingPhotos row={r} onPlateSaved={onPlateSaved} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-black text-slate-900 tracking-widest text-base lg:text-xl font-mono">
@@ -240,7 +398,9 @@ function FeedRow({ r, showDate = false }: { r: HistoryEntry; showDate?: boolean 
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-function Dashboard({ stats, history, loading }: { stats: Stats; history: HistoryEntry[]; loading: boolean }) {
+function Dashboard({ stats, history, loading, onPlateSaved }: {
+  stats: Stats; history: HistoryEntry[]; loading: boolean; onPlateSaved: () => void;
+}) {
   return (
     <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-[300px_1fr] lg:gap-6">
 
@@ -279,7 +439,9 @@ function Dashboard({ stats, history, loading }: { stats: Stats; history: History
           {loading && <RefreshCw size={15} className="animate-spin text-slate-400" />}
         </div>
         <div className="divide-y divide-slate-50 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
-          {history.slice(0, 50).map((r, i) => <FeedRow key={i} r={r} />)}
+          {history.slice(0, 50).map((r) => (
+            <FeedRow key={`${r.session_id}-${r.action}`} r={r} onPlateSaved={onPlateSaved} />
+          ))}
           {history.length === 0 && !loading && (
             <p className="text-center text-slate-400 py-16">Sin actividad registrada</p>
           )}
@@ -348,7 +510,9 @@ function Historial() {
 
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="divide-y divide-slate-50">
-          {visible.map((r, i) => <FeedRow key={i} r={r} showDate />)}
+          {visible.map((r) => (
+            <FeedRow key={`${r.session_id}-${r.action}`} r={r} showDate onPlateSaved={load} />
+          ))}
           {visible.length === 0 && !loading && (
             <p className="text-center text-slate-400 py-16">Sin registros para {date}</p>
           )}
@@ -592,7 +756,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 lg:px-8 py-5 lg:py-8">
-        {tab === "dashboard"      && <Dashboard stats={stats} history={history} loading={loading} />}
+        {tab === "dashboard"      && <Dashboard stats={stats} history={history} loading={loading} onPlateSaved={refresh} />}
         {tab === "historial"      && <Historial />}
         {tab === "reconciliacion" && <Reconciliacion />}
       </main>
