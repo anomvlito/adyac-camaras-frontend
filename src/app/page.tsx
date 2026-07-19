@@ -15,10 +15,12 @@ const API = process.env.NEXT_PUBLIC_API_URL || "https://2.24.69.49.nip.io";
 
 type HistoryEntry = {
   session_id: number | null; timestamp: string; plate: string; action: string;
-  status: string; fee: number; confidence: number; image_url: string | null;
+  status: string; review_status: string; fee: number; confidence: number;
+  image_url: string | null; image_path?: string | null;
 };
 type Sighting = {
-  plate: string; timestamp: string; confidence: number; image_url: string | null;
+  plate: string; timestamp: string; confidence: number;
+  image_url: string | null; image_path?: string | null;
 };
 type Stats = {
   today_income: number; today_entries: number;
@@ -46,15 +48,20 @@ function setAuth(auth: AuthState) {
   else localStorage.removeItem("cp_auth");
 }
 
-function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const auth = getAuth();
-  return fetch(url, {
+  const response = await fetch(url, {
     ...options,
     headers: {
       ...(options.headers || {}),
       ...(auth ? { Authorization: `Bearer ${auth.token}` } : {}),
     },
   });
+  if (response.status === 401) {
+    setAuth(null);
+    window.dispatchEvent(new CustomEvent("cp-auth-expired"));
+  }
+  return response;
 }
 
 // ─── Login page ───────────────────────────────────────────────────────────────
@@ -207,6 +214,9 @@ function PhotoThumb({ url, plate, status, size = "sm", editableRow, onPlateSaved
             {editableRow ? (
               <div className="bg-white/10 p-5 lg:p-6 rounded-3xl backdrop-blur-md border border-white/20 shadow-xl w-full max-w-xl">
                 <PlateEditor row={editableRow} onSaved={() => { setOpen(false); onPlateSaved?.(); }} />
+                <div className="mt-4 pt-4 border-t border-white/20">
+                  <ReviewButtons row={editableRow} onSaved={() => { setOpen(false); onPlateSaved?.(); }} dark />
+                </div>
               </div>
             ) : (
               <p className="text-center text-white font-black text-3xl tracking-widest font-mono drop-shadow-lg">{plate}</p>
@@ -297,6 +307,115 @@ function PlateEditor({ row, onSaved }: { row: HistoryEntry; onSaved?: () => void
   );
 }
 
+function ReviewButtons({ row, onSaved, dark = false }: {
+  row: HistoryEntry; onSaved?: () => void; dark?: boolean;
+}) {
+  const [saving, setSaving] = useState<"PLATE_OK" | "DUPLICATE" | null>(null);
+  const [error, setError] = useState("");
+
+  const update = async (status: "PLATE_OK" | "DUPLICATE") => {
+    if (status === "DUPLICATE" && !window.confirm(`¿Quitar ${row.plate} por ser una detección duplicada?`)) return;
+    setSaving(status); setError("");
+    try {
+      const response = await apiFetch(`${API}/api/history/${row.session_id}/review`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || "No se pudo guardar el estado");
+      }
+      onSaved?.();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Error al guardar");
+    } finally { setSaving(null); }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <button type="button" onClick={() => update("PLATE_OK")}
+        disabled={saving !== null || row.review_status === "PLATE_OK"}
+        className={`h-9 px-3 rounded-lg text-xs font-black transition-colors disabled:opacity-70 ${row.review_status === "PLATE_OK"
+          ? "bg-emerald-600 text-white" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}>
+        {saving === "PLATE_OK" ? "Guardando..." : row.review_status === "PLATE_OK" ? "✓ Patente OK" : "Patente OK"}
+      </button>
+      <button type="button" onClick={() => update("DUPLICATE")} disabled={saving !== null}
+        className="h-9 px-3 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200 text-xs font-black disabled:opacity-50">
+        {saving === "DUPLICATE" ? "Quitando..." : "Duplicada"}
+      </button>
+      {error && <span className={`w-full text-right text-[10px] ${dark ? "text-rose-300" : "text-rose-500"}`}>{error}</span>}
+    </div>
+  );
+}
+
+// Botones de confirmación para un avistamiento sin sesión (session_id null,
+// ver sightingToEntry): la cámara vio la patente pero, desde que se
+// desconectó el auto entry/exit, nada abre/cierra parking_sessions solo —
+// hay que confirmarlo a mano. "Registrar salida" si la patente ya figura
+// parqueada (parked), si no "Registrar entrada". La foto del avistamiento
+// (row.image_path) viaja junto al registro para que la sesión resultante
+// no quede sin foto.
+function RegisterActions({ row, isParked, onRegistered }: {
+  row: HistoryEntry; isParked: boolean; onRegistered: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg]   = useState("");
+
+  useEffect(() => { setMsg(""); }, [row.plate, row.timestamp]);
+
+  const registerEntry = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const r = await apiFetch(`${API}/api/entry`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plate: row.plate, isEvent: false, imagePath: row.image_path ?? null }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "No se pudo registrar");
+      setMsg("Entrada registrada");
+      onRegistered();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Error al registrar");
+    } finally { setBusy(false); }
+  };
+
+  const registerExit = async () => {
+    const feeInput = window.prompt(`Monto cobrado a ${row.plate} (dejar en 0 si no aplica):`, "0");
+    if (feeInput === null) return;
+    const fee = Number(feeInput.replace(/[^0-9.]/g, "")) || 0;
+    setBusy(true); setMsg("");
+    try {
+      const p = new URLSearchParams({ fee: String(fee) });
+      if (row.image_path) p.set("image_path", row.image_path);
+      const r = await apiFetch(`${API}/api/exit/${row.plate}?${p}`, { method: "POST" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "No se pudo registrar");
+      setMsg("Salida registrada");
+      onRegistered();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "Error al registrar");
+    } finally { setBusy(false); }
+  };
+
+  if (msg) {
+    return (
+      <span className={`text-xs font-bold shrink-0 ${msg.startsWith("Error") || msg.startsWith("No se") ? "text-rose-500" : "text-emerald-500"}`}>
+        {msg}
+      </span>
+    );
+  }
+
+  return isParked ? (
+    <button onClick={registerExit} disabled={busy}
+      className="h-9 px-3 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200 text-xs font-black disabled:opacity-50 shrink-0">
+      {busy ? "..." : "Registrar salida"}
+    </button>
+  ) : (
+    <button onClick={registerEntry} disabled={busy}
+      className="h-9 px-3 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 text-xs font-black disabled:opacity-50 shrink-0">
+      {busy ? "..." : "Registrar entrada"}
+    </button>
+  );
+}
+
 // Las sesiones ya no reciben foto automática al abrirse/cerrarse (la cámara
 // solo loguea avistamientos, sin tocar parking_sessions — ver CLAUDE.md).
 // Para una fila con sesión real (session_id), se acotan las fotos a una
@@ -368,12 +487,17 @@ function StatCard({ label, value, sub, accent = "text-slate-900" }: {
 
 // ─── Feed row (shared by Dashboard and Historial) ─────────────────────────────
 
-function FeedRow({ r, showDate = false, onPlateSaved }: {
-  r: HistoryEntry; showDate?: boolean; onPlateSaved?: () => void;
+function FeedRow({ r, showDate = false, onPlateSaved, parked }: {
+  r: HistoryEntry; showDate?: boolean; onPlateSaved?: () => void; parked?: Set<string>;
 }) {
   const today = format(new Date(), "yyyy-MM-dd");
+  const isSighting = r.session_id == null;
+  // /api/cars solo refleja el estado "ahora" — al navegar el Historial a un
+  // día pasado no tiene sentido ofrecer "Registrar salida" para una patente
+  // que está parqueada hoy pero cuyo avistamiento es de otra fecha.
+  const rowIsToday = r.timestamp.startsWith(today);
   return (
-    <div className="flex items-center gap-3 lg:gap-4 px-4 lg:px-5 py-3 lg:py-4">
+    <div className="flex flex-wrap items-center gap-3 lg:gap-4 px-4 lg:px-5 py-3 lg:py-4">
       <SightingPhotos row={r} onPlateSaved={onPlateSaved} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -402,6 +526,14 @@ function FeedRow({ r, showDate = false, onPlateSaved }: {
       <span className="text-xs text-slate-300 tabular-nums shrink-0 hidden md:block w-10 text-right">
         {(r.confidence * 100).toFixed(0)}%
       </span>
+      <div className="w-full lg:w-auto lg:ml-auto flex justify-end">
+        {isSighting ? (
+          <RegisterActions row={r} isParked={rowIsToday && !!parked?.has(r.plate)}
+            onRegistered={() => onPlateSaved?.()} />
+        ) : (
+          <ReviewButtons row={r} onSaved={onPlateSaved} />
+        )}
+      </div>
     </div>
   );
 }
@@ -409,19 +541,21 @@ function FeedRow({ r, showDate = false, onPlateSaved }: {
 // Convierte un avistamiento sin sesión (detection_log, sin parking_sessions
 // asociado) en una fila de feed más — misma forma que HistoryEntry, con
 // session_id null para que FeedRow sepa que no hay nada que corregir vía
-// /api/history/{id}/plate y que SightingPhotos debe traer todas las fotos
-// de esa patente (no acotadas a una ventana de tiempo puntual).
+// /api/history/{id}/plate (y en cambio ofrezca RegisterActions), y que
+// SightingPhotos debe traer todas las fotos de esa patente (no acotadas a
+// una ventana de tiempo puntual).
 function sightingToEntry(s: Sighting): HistoryEntry {
   return {
     session_id: null, timestamp: s.timestamp, plate: s.plate, action: "DETECTION",
-    status: "", fee: 0, confidence: s.confidence, image_url: s.image_url,
+    status: "", review_status: "", fee: 0, confidence: s.confidence,
+    image_url: s.image_url, image_path: s.image_path,
   };
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-function Dashboard({ stats, history, loading, onPlateSaved }: {
-  stats: Stats; history: HistoryEntry[]; loading: boolean; onPlateSaved: () => void;
+function Dashboard({ stats, history, loading, onPlateSaved, parked }: {
+  stats: Stats; history: HistoryEntry[]; loading: boolean; onPlateSaved: () => void; parked: Set<string>;
 }) {
   return (
     <div className="space-y-5">
@@ -465,7 +599,7 @@ function Dashboard({ stats, history, loading, onPlateSaved }: {
             {history.slice(0, 50).map((r) => (
               <FeedRow
                 key={r.session_id != null ? `${r.session_id}-${r.action}` : `sight-${r.plate}-${r.timestamp}`}
-                r={r} onPlateSaved={onPlateSaved} />
+                r={r} onPlateSaved={onPlateSaved} parked={parked} />
             ))}
             {history.length === 0 && !loading && (
               <p className="text-center text-slate-400 py-16">Sin actividad registrada</p>
@@ -483,14 +617,16 @@ function Historial() {
   const [date, setDate]     = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [filter, setFilter] = useState<"ALL" | "ENTRY" | "EXIT">("ALL");
   const [rows, setRows]     = useState<HistoryEntry[]>([]);
+  const [parked, setParked] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [h, sg] = await Promise.all([
+      const [h, sg, c] = await Promise.all([
         apiFetch(`${API}/api/history?limit=2000`),
         apiFetch(`${API}/api/sightings?limit=500&date=${date}`),
+        apiFetch(`${API}/api/cars`),
       ]);
       // Igual que en el Dashboard: el historial de un día mezcla sesiones
       // reales (entrada/salida) con avistamientos de ese día que todavía no
@@ -504,6 +640,7 @@ function Historial() {
       }
       merged.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       setRows(merged);
+      if (c.ok) setParked(new Set(Object.keys(await c.json())));
     } finally { setLoading(false); }
   }, [date]);
 
@@ -553,7 +690,7 @@ function Historial() {
           {visible.map((r) => (
             <FeedRow
               key={r.session_id != null ? `${r.session_id}-${r.action}` : `sight-${r.plate}-${r.timestamp}`}
-              r={r} showDate onPlateSaved={load} />
+              r={r} showDate onPlateSaved={load} parked={parked} />
           ))}
           {visible.length === 0 && !loading && (
             <p className="text-center text-slate-400 py-16">Sin registros para {date}</p>
@@ -733,21 +870,31 @@ export default function App() {
   const [tab, setTab]         = useState<"dashboard" | "historial" | "reconciliacion">("dashboard");
   const [stats, setStats]     = useState<Stats>({ today_income: 0, today_entries: 0, today_exits: 0, parked_now: 0 });
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [parked, setParked]   = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const today = format(new Date(), "d 'de' MMMM yyyy", { locale: es });
 
-  // Hydrate auth from localStorage
-  useEffect(() => { setAuthState(getAuth()); }, []);
+  // Hydrate auth and recover cleanly when the backend rejects an expired token.
+  useEffect(() => {
+    setAuthState(getAuth());
+    const expired = () => {
+      setAuthState(null);
+      window.alert("Tu sesión expiró. Ingresa nuevamente para continuar.");
+    };
+    window.addEventListener("cp-auth-expired", expired);
+    return () => window.removeEventListener("cp-auth-expired", expired);
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!getAuth()) return;
     setLoading(true);
     try {
       const ts = Date.now();
-      const [s, h, sg] = await Promise.all([
+      const [s, h, sg, c] = await Promise.all([
         apiFetch(`${API}/api/stats?t=${ts}`),
         apiFetch(`${API}/api/history?t=${ts}&limit=50`),
         apiFetch(`${API}/api/sightings?t=${ts}&limit=100`),
+        apiFetch(`${API}/api/cars?t=${ts}`),
       ]);
       if (s.ok) setStats(await s.json());
       // El feed en vivo mezcla sesiones reales (entrada/salida) con
@@ -760,6 +907,7 @@ export default function App() {
       }
       merged.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       setHistory(merged);
+      if (c.ok) setParked(new Set(Object.keys(await c.json())));
       if (s.status === 401 || h.status === 401) { setAuth(null); setAuthState(null); }
     } finally { setLoading(false); }
   }, []);
@@ -808,7 +956,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 lg:px-8 py-5 lg:py-8">
-        {tab === "dashboard"      && <Dashboard stats={stats} history={history} loading={loading} onPlateSaved={refresh} />}
+        {tab === "dashboard"      && <Dashboard stats={stats} history={history} loading={loading} onPlateSaved={refresh} parked={parked} />}
         {tab === "historial"      && <Historial />}
         {tab === "reconciliacion" && <Reconciliacion />}
       </main>
