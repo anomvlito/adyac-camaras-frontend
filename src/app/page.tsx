@@ -14,7 +14,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "https://2.24.69.49.nip.io";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type HistoryEntry = {
-  session_id: number; timestamp: string; plate: string; action: string;
+  session_id: number | null; timestamp: string; plate: string; action: string;
   status: string; fee: number; confidence: number; image_url: string | null;
 };
 type Sighting = {
@@ -299,31 +299,41 @@ function PlateEditor({ row, onSaved }: { row: HistoryEntry; onSaved?: () => void
 
 // Las sesiones ya no reciben foto automática al abrirse/cerrarse (la cámara
 // solo loguea avistamientos, sin tocar parking_sessions — ver CLAUDE.md).
-// Por patente, se muestran las últimas fotos donde fue avistada; si aún no
-// hay avistamientos (o falla la carga) se usa la foto de la sesión si existe.
+// Para una fila con sesión real (session_id), se acotan las fotos a una
+// ventana cercana a la hora de esa fila (±30 min) — no las últimas de la
+// patente en general, que podían ser de un momento sin relación (otro día,
+// otra hora). Para una fila de avistamiento sin sesión (session_id null,
+// ver sightingToEntry) se traen todas las fotos de esa patente del mismo
+// día que la fila — tampoco "todas las de la base de datos", que podían
+// venir de semanas atrás.
+// Si no hay ninguna (o falla la carga) se usa la foto de la sesión si existe.
 // Cualquiera de las fotos abre el mismo editor: la corrección es a nivel de
-// sesión (row.session_id), no de la foto puntual clickeada.
+// sesión (row.session_id), no de la foto puntual clickeada — y solo está
+// disponible cuando hay sesión real.
 function SightingPhotos({ row, onPlateSaved }: { row: HistoryEntry; onPlateSaved?: () => void }) {
   const [sightings, setSightings] = useState<Sighting[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${API}/api/sightings/${row.plate}?limit=2`)
+    const params = new URLSearchParams({ limit: "20" });
+    if (row.session_id != null) params.set("near", row.timestamp);
+    else params.set("date", row.timestamp.split(" ")[0]);
+    apiFetch(`${API}/api/sightings/${row.plate}?${params}`)
       .then(r => (r.ok ? r.json() : null))
       .then(data => { if (!cancelled && data) setSightings(data.sightings); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [row.plate]);
+  }, [row.plate, row.timestamp, row.session_id]);
 
   const urls = sightings && sightings.length > 0
     ? sightings.map(s => s.image_url)
     : [row.image_url];
 
   return (
-    <div className="flex gap-1 shrink-0">
-      {urls.slice(0, 2).map((url, idx) => (
+    <div className="flex gap-1 shrink-0 overflow-x-auto max-w-[120px] lg:max-w-[160px]">
+      {urls.map((url, idx) => (
         <PhotoThumb key={idx} url={url} plate={row.plate} status={row.status} size="sm"
-          editableRow={row} onPlateSaved={onPlateSaved} />
+          editableRow={row.session_id != null ? row : undefined} onPlateSaved={onPlateSaved} />
       ))}
     </div>
   );
@@ -396,55 +406,71 @@ function FeedRow({ r, showDate = false, onPlateSaved }: {
   );
 }
 
+// Convierte un avistamiento sin sesión (detection_log, sin parking_sessions
+// asociado) en una fila de feed más — misma forma que HistoryEntry, con
+// session_id null para que FeedRow sepa que no hay nada que corregir vía
+// /api/history/{id}/plate y que SightingPhotos debe traer todas las fotos
+// de esa patente (no acotadas a una ventana de tiempo puntual).
+function sightingToEntry(s: Sighting): HistoryEntry {
+  return {
+    session_id: null, timestamp: s.timestamp, plate: s.plate, action: "DETECTION",
+    status: "", fee: 0, confidence: s.confidence, image_url: s.image_url,
+  };
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 function Dashboard({ stats, history, loading, onPlateSaved }: {
   stats: Stats; history: HistoryEntry[]; loading: boolean; onPlateSaved: () => void;
 }) {
   return (
-    <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-[300px_1fr] lg:gap-6">
+    <div className="space-y-5">
+      <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-[300px_1fr] lg:gap-6">
 
-      {/* Left: stats */}
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <StatCard label="Entradas hoy"  value={stats.today_entries} accent="text-emerald-600" />
-          <StatCard label="Salidas hoy"   value={stats.today_exits}   accent="text-rose-600" />
-          <StatCard label="En parking"    value={stats.parked_now}    accent="text-indigo-600" />
-          <StatCard label="Recaudado"
-            value={`$${stats.today_income.toLocaleString("es-CL")}`} accent="text-amber-600" />
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 hidden lg:block">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Estado</p>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-slate-500">Cámara</span>
-              <span className="font-bold text-emerald-600">● Activa</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Staging</span>
-              <span className="font-bold text-emerald-600">● Activo</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Actualización</span>
-              <span className="font-bold text-slate-400">cada 15s</span>
+        {/* Left: stats */}
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <StatCard label="Entradas hoy"  value={stats.today_entries} accent="text-emerald-600" />
+            <StatCard label="Salidas hoy"   value={stats.today_exits}   accent="text-rose-600" />
+            <StatCard label="En parking"    value={stats.parked_now}    accent="text-indigo-600" />
+            <StatCard label="Recaudado"
+              value={`$${stats.today_income.toLocaleString("es-CL")}`} accent="text-amber-600" />
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 hidden lg:block">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Estado</p>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Cámara</span>
+                <span className="font-bold text-emerald-600">● Activa</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Staging</span>
+                <span className="font-bold text-emerald-600">● Activo</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Actualización</span>
+                <span className="font-bold text-slate-400">cada 15s</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Right: feed */}
-      <div className="bg-white rounded-2xl border border-slate-200 lg:overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
-          <h2 className="font-bold text-slate-700">Feed en vivo</h2>
-          {loading && <RefreshCw size={15} className="animate-spin text-slate-400" />}
-        </div>
-        <div className="divide-y divide-slate-50 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
-          {history.slice(0, 50).map((r) => (
-            <FeedRow key={`${r.session_id}-${r.action}`} r={r} onPlateSaved={onPlateSaved} />
-          ))}
-          {history.length === 0 && !loading && (
-            <p className="text-center text-slate-400 py-16">Sin actividad registrada</p>
-          )}
+        {/* Right: feed */}
+        <div className="bg-white rounded-2xl border border-slate-200 lg:overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+            <h2 className="font-bold text-slate-700">Feed en vivo</h2>
+            {loading && <RefreshCw size={15} className="animate-spin text-slate-400" />}
+          </div>
+          <div className="divide-y divide-slate-50 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
+            {history.slice(0, 50).map((r) => (
+              <FeedRow
+                key={r.session_id != null ? `${r.session_id}-${r.action}` : `sight-${r.plate}-${r.timestamp}`}
+                r={r} onPlateSaved={onPlateSaved} />
+            ))}
+            {history.length === 0 && !loading && (
+              <p className="text-center text-slate-400 py-16">Sin actividad registrada</p>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -462,8 +488,22 @@ function Historial() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiFetch(`${API}/api/history?limit=2000`);
-      if (r.ok) setRows((await r.json()).filter((e: HistoryEntry) => e.timestamp.startsWith(date)));
+      const [h, sg] = await Promise.all([
+        apiFetch(`${API}/api/history?limit=2000`),
+        apiFetch(`${API}/api/sightings?limit=500&date=${date}`),
+      ]);
+      // Igual que en el Dashboard: el historial de un día mezcla sesiones
+      // reales (entrada/salida) con avistamientos de ese día que todavía no
+      // tienen sesión asociada.
+      let merged: HistoryEntry[] = h.ok
+        ? (await h.json()).filter((e: HistoryEntry) => e.timestamp.startsWith(date))
+        : [];
+      if (sg.ok) {
+        const { sightings } = await sg.json();
+        merged = [...merged, ...(sightings as Sighting[]).map(sightingToEntry)];
+      }
+      merged.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      setRows(merged);
     } finally { setLoading(false); }
   }, [date]);
 
@@ -511,7 +551,9 @@ function Historial() {
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <div className="divide-y divide-slate-50">
           {visible.map((r) => (
-            <FeedRow key={`${r.session_id}-${r.action}`} r={r} showDate onPlateSaved={load} />
+            <FeedRow
+              key={r.session_id != null ? `${r.session_id}-${r.action}` : `sight-${r.plate}-${r.timestamp}`}
+              r={r} showDate onPlateSaved={load} />
           ))}
           {visible.length === 0 && !loading && (
             <p className="text-center text-slate-400 py-16">Sin registros para {date}</p>
@@ -702,12 +744,22 @@ export default function App() {
     setLoading(true);
     try {
       const ts = Date.now();
-      const [s, h] = await Promise.all([
+      const [s, h, sg] = await Promise.all([
         apiFetch(`${API}/api/stats?t=${ts}`),
         apiFetch(`${API}/api/history?t=${ts}&limit=50`),
+        apiFetch(`${API}/api/sightings?t=${ts}&limit=100`),
       ]);
       if (s.ok) setStats(await s.json());
-      if (h.ok) setHistory(await h.json());
+      // El feed en vivo mezcla sesiones reales (entrada/salida) con
+      // avistamientos que la cámara detectó pero que todavía no tienen
+      // sesión asociada (ver sightingToEntry) — ambos, ordenados por hora.
+      let merged: HistoryEntry[] = h.ok ? await h.json() : [];
+      if (sg.ok) {
+        const { sightings } = await sg.json();
+        merged = [...merged, ...(sightings as Sighting[]).map(sightingToEntry)];
+      }
+      merged.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      setHistory(merged);
       if (s.status === 401 || h.status === 401) { setAuth(null); setAuthState(null); }
     } finally { setLoading(false); }
   }, []);
