@@ -26,7 +26,7 @@ export function calculateFee(entryTime: number, exitTime: number, isEvent?: bool
   
   if (diffMinutes <= 0) return 0;
   
-  let total = diffMinutes * PARKING_CONFIG.pricePerMinute;
+  const total = diffMinutes * PARKING_CONFIG.pricePerMinute;
   
   if (total > PARKING_CONFIG.maxFaresPerDay) {
     return PARKING_CONFIG.maxFaresPerDay;
@@ -34,4 +34,3 @@ export function calculateFee(entryTime: number, exitTime: number, isEvent?: bool
   
   return Math.round(total);
 }
-
