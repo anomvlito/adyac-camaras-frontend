@@ -26,10 +26,21 @@ type Stats = {
   today_income: number; today_entries: number;
   today_exits: number; parked_now: number;
 };
+type CameraOnlyResult = {
+  plate: string; camera_time: string; confidence: number; image_url: string | null;
+};
+type MatchedResult = CameraOnlyResult & {
+  excel_ingreso: string; diff_minutes: number; valor: number;
+  operador: string; estado: string;
+};
+type ExcelOnlyResult = {
+  plate: string; excel_ingreso: string; excel_salida: string | null;
+  valor: number; operador: string; estado: string;
+};
 type ReconcileResult = {
   date: string;
   summary: { camera_total: number; excel_total: number; matched: number; camera_only: number; excel_only: number; excel_revenue: number; };
-  camera_only: any[]; matched: any[]; excel_only: any[];
+  camera_only: CameraOnlyResult[]; matched: MatchedResult[]; excel_only: ExcelOnlyResult[];
 };
 type AuthState = { token: string; username: string; role: string } | null;
 
@@ -138,7 +149,7 @@ function LoginPage({ onLogin }: { onLogin: (auth: AuthState) => void }) {
           {error && <p className="text-sm text-rose-500 font-semibold text-center">{error}</p>}
 
           <button type="submit" disabled={loading}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-black py-3 rounded-xl transition-colors text-sm">
+            className="w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-60 text-white font-black py-3 rounded-xl transition-colors text-sm">
             {loading ? "Ingresando..." : "Ingresar"}
           </button>
         </form>
@@ -154,18 +165,13 @@ function PhotoThumb({ url, plate, status, size = "sm", editableRow, onPlateSaved
   editableRow?: HistoryEntry; onPlateSaved?: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
+  const [imageState, setImageState] = useState({ url, loaded: false, failed: false, attempt: 0 });
+  const loaded = imageState.url === url && imageState.loaded;
+  const failed = imageState.url === url && imageState.failed;
+  const attempt = imageState.url === url ? imageState.attempt : 0;
   const cls = size === "lg"
     ? "w-20 h-14 lg:w-24 lg:h-16"
     : "w-14 h-10";
-
-  useEffect(() => {
-    setLoaded(false);
-    setFailed(false);
-    setAttempt(0);
-  }, [url]);
 
   if (!url) return (
     <div title={status === "AUTO_CLOSED" ? "Cierre automático sin captura" : "Sin imagen asociada"}
@@ -181,7 +187,7 @@ function PhotoThumb({ url, plate, status, size = "sm", editableRow, onPlateSaved
 
   if (failed) return (
     <button type="button" title="Reintentar cargar imagen"
-      onClick={() => { setFailed(false); setLoaded(false); setAttempt(value => value + 1); }}
+      onClick={() => setImageState({ url, loaded: false, failed: false, attempt: attempt + 1 })}
       className={`${cls} rounded-xl bg-rose-50 border border-rose-100 flex flex-col items-center justify-center shrink-0`}>
       <AlertTriangle size={size === "lg" ? 17 : 14} className="text-rose-400" />
       {size === "lg" && <span className="text-[8px] text-rose-500 mt-0.5">Reintentar</span>}
@@ -193,7 +199,8 @@ function PhotoThumb({ url, plate, status, size = "sm", editableRow, onPlateSaved
       <button onClick={() => loaded && setOpen(true)} className={`${cls} relative shrink-0 group`} disabled={!loaded} title="Ampliar y editar">
         {!loaded && <span className="absolute inset-0 rounded-xl bg-slate-100 animate-pulse" aria-label="Cargando imagen" />}
         <img key={attempt} src={url} alt={`Captura de patente ${plate}`} loading="lazy" decoding="async"
-          onLoad={() => setLoaded(true)} onError={() => setFailed(true)}
+          onLoad={() => setImageState({ url, loaded: true, failed: false, attempt })}
+          onError={() => setImageState({ url, loaded: false, failed: true, attempt })}
           className={`${cls} object-cover rounded-xl border border-slate-200 group-hover:scale-105 transition-all cursor-zoom-in ${loaded ? "opacity-100" : "opacity-0"}`} />
         {loaded && editableRow && (
           <div className="absolute -bottom-1 -right-1 bg-indigo-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm">
