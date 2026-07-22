@@ -48,7 +48,8 @@ describe("application flow characterization", () => {
     render(<App />);
 
     expect(await screen.findByText("Feed en vivo")).toBeTruthy();
-    expect(screen.getByText("$1.200")).toBeTruthy();
+    // HU-003: el Dashboard ya no renderiza las tarjetas de estadísticas,
+    // pero App sigue llamando a /api/stats (ver aserción de fetchMock abajo).
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
 
     await userEvent.click(screen.getByRole("button", { name: "Historial" }));

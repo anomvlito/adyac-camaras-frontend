@@ -52,7 +52,10 @@ test("preserves dashboard, history and reconciliation navigation", async ({ page
   await page.goto("/");
 
   await expect(page.getByText("Feed en vivo")).toBeVisible();
-  await expect(page.getByText("$1.200")).toBeVisible();
+  // HU-003: se retiran las tarjetas de estadísticas y el bloque "Estado" del Dashboard.
+  await expect(page.getByText("$1.200")).not.toBeVisible();
+  await expect(page.getByText("Entradas hoy")).not.toBeVisible();
+  await expect(page.getByText("Estado", { exact: true })).not.toBeVisible();
 
   await page.getByRole("button", { name: "Historial" }).click();
   await expect(page.getByRole("button", { name: "Todos" })).toBeVisible();
