@@ -100,7 +100,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 lg:px-8 py-5 lg:py-8">
-        {tab === "dashboard"      && <Dashboard stats={stats} history={history} loading={loading} onPlateSaved={refresh} parked={parked} />}
+        {tab === "dashboard"      && <Dashboard history={history} loading={loading} onPlateSaved={refresh} parked={parked} />}
         {tab === "historial"      && <HistoryView />}
         {tab === "reconciliacion" && <ReconciliationView />}
       </main>
