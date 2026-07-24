@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Car, LogOut } from "lucide-react";
@@ -8,23 +8,18 @@ import LoginPage from "@/features/auth/LoginPage";
 import Dashboard from "@/features/dashboard/Dashboard";
 import HistoryView from "@/features/history/HistoryView";
 import ReconciliationView from "@/features/reconciliation/ReconciliationView";
-import { API, AUTH_EXPIRED_EVENT, apiFetch, getAuth, setAuth } from "@/lib/auth";
-import { DASHBOARD_REFRESH_MS } from "@/lib/constants";
-import { mergeFeedEntries } from "@/lib/feed";
-import type { AuthState, HistoryEntry, Sighting, Stats } from "@/lib/types";
+import { AUTH_EXPIRED_EVENT, getAuth, setAuth } from "@/lib/auth";
+import type { AuthState } from "@/lib/types";
 
 export default function App() {
-  const [auth, setAuthState]  = useState<AuthState>(null);
+  const [auth, setAuthState]  = useState<AuthState>(() =>
+    typeof window === "undefined" ? null : getAuth()
+  );
   const [tab, setTab]         = useState<"dashboard" | "historial" | "reconciliacion">("dashboard");
-  const [stats, setStats]     = useState<Stats>({ today_income: 0, today_entries: 0, today_exits: 0, parked_now: 0 });
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [parked, setParked]   = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
   const today = format(new Date(), "d 'de' MMMM yyyy", { locale: es });
 
   // Hydrate auth and recover cleanly when the backend rejects an expired token.
   useEffect(() => {
-    setAuthState(getAuth());
     const expired = () => {
       setAuthState(null);
       window.alert("Tu sesión expiró. Ingresa nuevamente para continuar.");
@@ -32,36 +27,6 @@ export default function App() {
     window.addEventListener(AUTH_EXPIRED_EVENT, expired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expired);
   }, []);
-
-  const refresh = useCallback(async () => {
-    if (!getAuth()) return;
-    setLoading(true);
-    try {
-      const ts = Date.now();
-      const [s, h, sg, c] = await Promise.all([
-        apiFetch(`${API}/api/stats?t=${ts}`),
-        apiFetch(`${API}/api/history?t=${ts}&limit=50`),
-        apiFetch(`${API}/api/sightings?t=${ts}&limit=100`),
-        apiFetch(`${API}/api/cars?t=${ts}`),
-      ]);
-      if (s.ok) setStats(await s.json());
-      // El feed en vivo mezcla sesiones reales (entrada/salida) con
-      // avistamientos que la cámara detectó pero que todavía no tienen
-      // sesión asociada (ver sightingToEntry) — ambos, ordenados por hora.
-      const historyEntries: HistoryEntry[] = h.ok ? await h.json() : [];
-      const sightings: Sighting[] = sg.ok ? (await sg.json()).sightings : [];
-      setHistory(mergeFeedEntries(historyEntries, sightings));
-      if (c.ok) setParked(new Set(Object.keys(await c.json())));
-      if (s.status === 401 || h.status === 401) { setAuth(null); setAuthState(null); }
-    } finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => {
-    if (!auth) return;
-    refresh();
-    const id = setInterval(refresh, DASHBOARD_REFRESH_MS);
-    return () => clearInterval(id);
-  }, [auth, refresh]);
 
   const logout = () => { setAuth(null); setAuthState(null); };
   const handleLogin = (a: AuthState) => { setAuthState(a); };
@@ -82,7 +47,7 @@ export default function App() {
           <p className="text-sm text-slate-400 hidden lg:block capitalize flex-1">{today}</p>
           <nav className="ml-auto flex gap-1 lg:gap-2">
             {([
-              ["dashboard",      "Dashboard"],
+              ["dashboard",      "Estadías"],
               ["historial",      "Historial"],
               ["reconciliacion", "Excel"],
             ] as const).map(([t, label]) => (
@@ -100,7 +65,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 lg:px-8 py-5 lg:py-8">
-        {tab === "dashboard"      && <Dashboard history={history} loading={loading} onPlateSaved={refresh} parked={parked} />}
+        {tab === "dashboard"      && <Dashboard />}
         {tab === "historial"      && <HistoryView />}
         {tab === "reconciliacion" && <ReconciliationView />}
       </main>

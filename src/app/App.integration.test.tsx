@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("application flow characterization", () => {
-  it("loads the authenticated dashboard and preserves the three views", async () => {
+  it("loads completed stays and preserves the three views", async () => {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
       token: "synthetic-token",
       username: "tester",
@@ -30,27 +30,33 @@ describe("application flow characterization", () => {
     }));
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
-      if (url.includes("/api/stats")) {
-        return Promise.resolve(jsonResponse({
-          today_income: 1200,
-          today_entries: 2,
-          today_exits: 1,
-          parked_now: 1,
-        }));
-      }
+      if (url.includes("/api/stays")) return Promise.resolve(jsonResponse([{
+        stay_id: 1,
+        resolved_plate: "TEST12",
+        entry_detection_id: 10,
+        exit_detection_id: 11,
+        entry_time: "2026-07-24T10:00:00-04:00",
+        exit_time: "2026-07-24T11:27:00-04:00",
+        duration_minutes: 87,
+        match_type: "MANUAL",
+        match_confidence: 0.8,
+        status: "COMPLETED",
+        entry_image_url: null,
+        exit_image_url: null,
+        fee: 0,
+      }]));
+      if (url.includes("/api/detections")) return Promise.resolve(jsonResponse([]));
       if (url.includes("/api/sightings")) return Promise.resolve(jsonResponse({ sightings: [] }));
       if (url.includes("/api/history")) return Promise.resolve(jsonResponse([]));
-      if (url.includes("/api/cars")) return Promise.resolve(jsonResponse({}));
       return Promise.resolve(jsonResponse({}));
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
 
-    expect(await screen.findByText("Feed en vivo")).toBeTruthy();
-    // HU-003: el Dashboard ya no renderiza las tarjetas de estadísticas,
-    // pero App sigue llamando a /api/stats (ver aserción de fetchMock abajo).
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(await screen.findByRole("heading", { name: "Estadías" })).toBeTruthy();
+    expect(screen.getByText("1 h 27 min")).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
     await userEvent.click(screen.getByRole("button", { name: "Historial" }));
     expect(await screen.findByRole("button", { name: "Todos" })).toBeTruthy();
