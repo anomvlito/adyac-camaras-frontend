@@ -2,7 +2,7 @@ export type ParkedCar = {
   plate: string;
   entryTime: number; // Timestamp in ms
   isEvent: boolean;
-  eventFee?: number;
+  eventFee?: number | null;
 };
 
 export type ParkingConfig = {
@@ -17,8 +17,8 @@ export const PARKING_CONFIG: ParkingConfig = {
   maxFaresPerDay: 8000
 };
 
-export function calculateFee(entryTime: number, exitTime: number, isEvent?: boolean, eventFee?: number): number {
-  if (isEvent && eventFee) {
+export function calculateFee(entryTime: number, exitTime: number, isEvent?: boolean, eventFee?: number | null): number {
+  if (isEvent && eventFee != null) {
     return eventFee;
   }
   const diffMs = exitTime - entryTime;
