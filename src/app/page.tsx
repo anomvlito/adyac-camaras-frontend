@@ -6,10 +6,16 @@ import { es } from "date-fns/locale";
 import {
   Car, AlertTriangle, CheckCircle2, HelpCircle, Upload,
   Calendar, RefreshCw, Image as ImageIcon, X,
-  ChevronLeft, ChevronRight, LogIn, LogOut, Eye, EyeOff, User,
+  ChevronLeft, ChevronRight, LogIn, LogOut, Eye, EyeOff, User, Link2, XCircle,
 } from "lucide-react";
+import {
+  fetchDashboardData, patchExitOrphan,
+  type DashboardData, type EntryOpen, type ExitOrphan, type SessionClosed,
+} from "@/lib/dashboardMock";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://2.24.69.49.nip.io";
+// HU-005: mismo intervalo de polling que usaba el feed anterior (15s).
+const DASHBOARD_REFRESH_MS = 15_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -559,60 +565,203 @@ function sightingToEntry(s: Sighting): HistoryEntry {
   };
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
+// ─── Dashboard (HU-005) ─────────────────────────────────────────────────────
+// Tres columnas de conciliación entrada/salida: (1) entradas sin salida
+// asociada, (2) salidas sin entrada asociada, (3) sesiones completas. Consume
+// el contrato de HU-004 (backend, aún no implementada) vía un mock local —
+// ver `src/lib/dashboardMock.ts` para el punto exacto de integración real.
+// StatCard sigue definido más arriba aunque este Dashboard ya no lo invoca
+// (mismo criterio que HU-003 con el bloque de estadísticas: no se borra el
+// componente compartido, solo se deja de usar acá).
 
-function Dashboard({ stats, history, loading, onPlateSaved, parked }: {
-  stats: Stats; history: HistoryEntry[]; loading: boolean; onPlateSaved: () => void; parked: Set<string>;
+function formatTime(iso: string): string {
+  return format(new Date(iso), "HH:mm");
+}
+
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}min` : `${m}min`;
+}
+
+function EntryOpenCard({ entry, selectable, busy, onSelect }: {
+  entry: EntryOpen; selectable: boolean; busy: boolean; onSelect: () => void;
 }) {
   return (
-    <div className="space-y-5">
-      <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-[300px_1fr] lg:gap-6">
+    <div className={`bg-white rounded-2xl border p-3 flex flex-col gap-2 ${selectable ? "border-indigo-300 ring-2 ring-indigo-100" : "border-slate-200"}`}>
+      <PhotoThumb url={entry.entry_image_url} plate={entry.plate} size="lg" />
+      <div>
+        <p className="font-black text-slate-900 tracking-widest text-base font-mono">{entry.plate}</p>
+        <p className="text-sm text-slate-400 font-mono">{formatTime(entry.entry_time)}</p>
+      </div>
+      {selectable && (
+        <button onClick={onSelect} disabled={busy}
+          className="mt-1 h-9 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-black flex items-center justify-center gap-1.5">
+          <Link2 size={13} /> Asociar aquí
+        </button>
+      )}
+    </div>
+  );
+}
 
-        {/* Left: stats */}
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <StatCard label="Entradas hoy"  value={stats.today_entries} accent="text-emerald-600" />
-            <StatCard label="Salidas hoy"   value={stats.today_exits}   accent="text-rose-600" />
-            <StatCard label="En parking"    value={stats.parked_now}    accent="text-indigo-600" />
-            <StatCard label="Recaudado"
-              value={`$${stats.today_income.toLocaleString("es-CL")}`} accent="text-amber-600" />
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 hidden lg:block">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Estado</p>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Cámara</span>
-                <span className="font-bold text-emerald-600">● Activa</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Staging</span>
-                <span className="font-bold text-emerald-600">● Activo</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Actualización</span>
-                <span className="font-bold text-slate-400">cada 15s</span>
-              </div>
-            </div>
-          </div>
-        </div>
+function ExitOrphanCard({ orphan, selected, busy, onSelect, onDismiss }: {
+  orphan: ExitOrphan; selected: boolean; busy: boolean;
+  onSelect: () => void; onDismiss: () => void;
+}) {
+  return (
+    <div className={`bg-white rounded-2xl border p-3 flex flex-col gap-2 ${selected ? "border-indigo-400 ring-2 ring-indigo-100" : "border-slate-200"}`}>
+      <PhotoThumb url={orphan.exit_image_url} plate={orphan.plate} size="lg" />
+      <div>
+        <p className="font-black text-slate-900 tracking-widest text-base font-mono">{orphan.plate}</p>
+        <p className="text-sm text-slate-400 font-mono">{formatTime(orphan.exit_time)}</p>
+        <p className="text-[10px] text-slate-300 mt-0.5">{(orphan.confidence * 100).toFixed(0)}% confianza</p>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={onSelect} disabled={busy}
+          className={`flex-1 h-9 rounded-lg text-xs font-black flex items-center justify-center gap-1.5 disabled:opacity-50 ${selected ? "bg-indigo-600 text-white" : "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"}`}>
+          <Link2 size={13} /> {selected ? "Elegí la entrada →" : "Asociar"}
+        </button>
+        <button onClick={onDismiss} disabled={busy}
+          title="Descartar (no se borra, queda para auditoría)"
+          className="h-9 px-3 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200 text-xs font-black disabled:opacity-50">
+          <XCircle size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
 
-        {/* Right: feed */}
-        <div className="bg-white rounded-2xl border border-slate-200 lg:overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
-            <h2 className="font-bold text-slate-700">Feed en vivo</h2>
-            {loading && <RefreshCw size={15} className="animate-spin text-slate-400" />}
-          </div>
-          <div className="divide-y divide-slate-50 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
-            {history.slice(0, 50).map((r) => (
-              <FeedRow
-                key={r.session_id != null ? `${r.session_id}-${r.action}` : `sight-${r.plate}-${r.timestamp}`}
-                r={r} onPlateSaved={onPlateSaved} parked={parked} />
-            ))}
-            {history.length === 0 && !loading && (
-              <p className="text-center text-slate-400 py-16">Sin actividad registrada</p>
-            )}
-          </div>
+function SessionClosedCard({ session }: { session: SessionClosed }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-3 flex items-center gap-3">
+      <div className="flex flex-col items-center gap-1 shrink-0">
+        <PhotoThumb url={session.entry_image_url} plate={session.plate} size="sm" />
+        <span className="text-[10px] text-slate-400 font-mono">{formatTime(session.entry_time)}</span>
+      </div>
+      <div className="flex-1 min-w-0 text-center">
+        <p className="font-black text-slate-900 tracking-widest text-sm font-mono truncate">{session.plate}</p>
+        <p className="text-[11px] text-slate-400">{formatDuration(session.duration_minutes)}</p>
+      </div>
+      <div className="flex flex-col items-center gap-1 shrink-0">
+        <PhotoThumb url={session.exit_image_url} plate={session.plate} size="sm" />
+        <span className="text-[10px] text-slate-400 font-mono">{formatTime(session.exit_time)}</span>
+      </div>
+    </div>
+  );
+}
+
+function DashboardColumn({ title, count, loading, children }: {
+  title: string; count: number; loading: boolean; children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-slate-50 rounded-2xl border border-slate-200 flex flex-col min-h-[240px]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+        <h2 className="font-bold text-slate-700 text-sm">{title}</h2>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-400 tabular-nums">{count}</span>
+          {loading && <RefreshCw size={13} className="animate-spin text-slate-300" />}
         </div>
+      </div>
+      <div className="p-3 space-y-2.5 overflow-y-auto max-h-[calc(100vh-260px)]">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Dashboard() {
+  const [data, setData] = useState<DashboardData>({ entriesOpen: [], exitsOrphan: [], sessionsClosed: [] });
+  const [loading, setLoading] = useState(false);
+  const [selectedOrphanId, setSelectedOrphanId] = useState<number | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await fetchDashboardData());
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, DASHBOARD_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const handleDismiss = async (orphanExitId: number) => {
+    if (!window.confirm("¿Descartar esta salida? No se borra, queda marcada para auditoría.")) return;
+    setActionBusy(true); setError("");
+    try {
+      await patchExitOrphan(orphanExitId, { action: "dismiss" });
+      if (selectedOrphanId === orphanExitId) setSelectedOrphanId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo descartar");
+    } finally { setActionBusy(false); }
+  };
+
+  const handleMatch = async (sessionId: number) => {
+    if (selectedOrphanId == null) return;
+    setActionBusy(true); setError("");
+    try {
+      await patchExitOrphan(selectedOrphanId, { action: "match", session_id: sessionId });
+      setSelectedOrphanId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo asociar");
+    } finally { setActionBusy(false); }
+  };
+
+  return (
+    <div className="space-y-3">
+      {selectedOrphanId != null && (
+        <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2.5 text-sm">
+          <span className="text-indigo-700 font-semibold">
+            Elegí la entrada correspondiente en la columna izquierda para asociarla.
+          </span>
+          <button onClick={() => setSelectedOrphanId(null)}
+            className="text-indigo-500 hover:text-indigo-700 font-bold text-xs">
+            Cancelar
+          </button>
+        </div>
+      )}
+      {error && <p className="text-sm text-rose-500 font-semibold">{error}</p>}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <DashboardColumn title="Entradas sin salida" count={data.entriesOpen.length} loading={loading}>
+          {data.entriesOpen.map((entry) => (
+            <EntryOpenCard key={entry.session_id} entry={entry}
+              selectable={selectedOrphanId != null} busy={actionBusy}
+              onSelect={() => handleMatch(entry.session_id)} />
+          ))}
+          {data.entriesOpen.length === 0 && !loading && (
+            <p className="text-center text-slate-400 py-10 text-sm">Sin entradas pendientes</p>
+          )}
+        </DashboardColumn>
+
+        <DashboardColumn title="Salidas sin entrada" count={data.exitsOrphan.length} loading={loading}>
+          {data.exitsOrphan.map((orphan) => (
+            <ExitOrphanCard key={orphan.orphan_exit_id} orphan={orphan}
+              selected={selectedOrphanId === orphan.orphan_exit_id} busy={actionBusy}
+              onSelect={() => setSelectedOrphanId(
+                selectedOrphanId === orphan.orphan_exit_id ? null : orphan.orphan_exit_id
+              )}
+              onDismiss={() => handleDismiss(orphan.orphan_exit_id)} />
+          ))}
+          {data.exitsOrphan.length === 0 && !loading && (
+            <p className="text-center text-slate-400 py-10 text-sm">Sin salidas pendientes</p>
+          )}
+        </DashboardColumn>
+
+        <DashboardColumn title="Sesiones completas" count={data.sessionsClosed.length} loading={loading}>
+          {data.sessionsClosed.map((session) => (
+            <SessionClosedCard key={session.session_id} session={session} />
+          ))}
+          {data.sessionsClosed.length === 0 && !loading && (
+            <p className="text-center text-slate-400 py-10 text-sm">Sin sesiones completas todavía</p>
+          )}
+        </DashboardColumn>
       </div>
     </div>
   );
@@ -963,7 +1112,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 lg:px-8 py-5 lg:py-8">
-        {tab === "dashboard"      && <Dashboard stats={stats} history={history} loading={loading} onPlateSaved={refresh} parked={parked} />}
+        {tab === "dashboard"      && <Dashboard />}
         {tab === "historial"      && <Historial />}
         {tab === "reconciliacion" && <Reconciliacion />}
       </main>
