@@ -54,7 +54,7 @@ describe("application flow characterization", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Estadías" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeTruthy();
     expect(screen.getByText("1 h 27 min")).toBeTruthy();
     expect(screen.getByText("Sin foto de entrada")).toBeTruthy();
     expect(screen.getByText("Sin foto de salida")).toBeTruthy();

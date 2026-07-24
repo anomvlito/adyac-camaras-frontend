@@ -51,6 +51,87 @@ function StayEvidence({ side, imageUrl, time }: {
   );
 }
 
+type DetectionRole = "entry" | "exit" | "triage";
+
+function DetectionCard({
+  item,
+  role,
+  selected,
+  busy,
+  onUseAsEntry,
+  onUseAsExit,
+  onDismiss,
+}: {
+  item: DetectionEvent;
+  role: DetectionRole;
+  selected: boolean;
+  busy: boolean;
+  onUseAsEntry: () => void;
+  onUseAsExit: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <article
+      className={`rounded-xl border p-3 ${selected ? "border-indigo-400 bg-indigo-50" : "border-slate-200"}`}
+    >
+      <div className="flex items-start gap-3">
+        {item.image_url ? (
+          <img src={item.image_url} alt="" className="h-16 w-24 rounded-lg object-cover bg-slate-100" />
+        ) : (
+          <div className="h-16 w-24 rounded-lg bg-slate-100" />
+        )}
+        <div className="min-w-0">
+          <p className="font-black text-slate-900">{item.detected_plate}</p>
+          <p className="text-xs text-slate-500">{localTime(item.detected_at)}</p>
+          <p className="mt-1 text-xs font-bold text-slate-500">
+            OCR {confidence(item.confidence)} · {item.direction}
+          </p>
+        </div>
+      </div>
+      <div className={`grid gap-2 mt-3 ${role === "triage" ? "grid-cols-3" : "grid-cols-2"}`}>
+        {role !== "exit" && (
+          <button disabled={busy} onClick={onUseAsEntry}
+            className="rounded-lg bg-emerald-100 py-2 text-xs font-black text-emerald-700 disabled:opacity-50">
+            {role === "triage" ? "Es entrada" : "Usar como entrada"}
+          </button>
+        )}
+        {role !== "entry" && (
+          <button disabled={busy} onClick={onUseAsExit}
+            className="rounded-lg bg-rose-100 py-2 text-xs font-black text-rose-700 disabled:opacity-50">
+            {role === "triage" ? "Es salida" : "Usar como salida"}
+          </button>
+        )}
+        <button disabled={busy} onClick={onDismiss}
+          className="rounded-lg bg-slate-100 py-2 text-xs font-black text-slate-600 disabled:opacity-50">
+          Descartar
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function DashboardColumn({ title, subtitle, count, children, empty }: {
+  title: string;
+  subtitle: string;
+  count: number;
+  children: React.ReactNode;
+  empty: string;
+}) {
+  return (
+    <section className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col min-w-0">
+      <div className="mb-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-black text-slate-800">{title}</h2>
+          <span className="text-xs font-bold text-slate-500 rounded-lg bg-slate-100 px-2 py-1">{count}</span>
+        </div>
+        <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
+      </div>
+      <div className="space-y-3">{children}</div>
+      {count === 0 && <p className="py-8 text-center text-sm text-slate-400">{empty}</p>}
+    </section>
+  );
+}
+
 export default function Dashboard() {
   const [stays, setStays] = useState<ParkingStay[]>([]);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
@@ -97,6 +178,10 @@ export default function Dashboard() {
     [entry, exit]
   );
 
+  const entradas = useMemo(() => detections.filter((d) => d.direction === "APPROACHING"), [detections]);
+  const salidas = useMemo(() => detections.filter((d) => d.direction === "DEPARTING"), [detections]);
+  const triage = useMemo(() => detections.filter((d) => d.direction === "UNKNOWN"), [detections]);
+
   const reconcile = async () => {
     if (!entry || !exit || !resolvedPlate.trim() || invalidOrder) return;
     setBusy(true);
@@ -132,13 +217,22 @@ export default function Dashboard() {
     }
   };
 
+  const markAsEntry = (item: DetectionEvent) => {
+    setEntry(item);
+    if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
+  };
+  const markAsExit = (item: DetectionEvent) => {
+    setExit(item);
+    if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
+  };
+
   return (
     <div className="space-y-6">
       <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="p-5 border-b border-slate-100 flex flex-wrap items-end gap-3">
+        <div className="p-5 flex flex-wrap items-end gap-3">
           <div className="mr-auto">
-            <h1 className="text-xl font-black text-slate-900">Estadías</h1>
-            <p className="text-sm text-slate-500">Tiempo transcurrido entre la detección de entrada y salida.</p>
+            <h1 className="text-xl font-black text-slate-900">Dashboard</h1>
+            <p className="text-sm text-slate-500">Entradas y salidas pendientes de conciliar, y estadías completas.</p>
           </div>
           <label className="text-xs font-bold text-slate-500">
             Fecha
@@ -151,116 +245,138 @@ export default function Dashboard() {
               placeholder="ABCD12"
               className="block mt-1 h-10 w-32 rounded-lg border border-slate-200 px-3 text-sm font-bold uppercase" />
           </label>
-          <button onClick={load} aria-label="Actualizar estadías"
+          <button onClick={load} aria-label="Actualizar dashboard"
             className="h-10 px-3 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
 
-        {error && <p role="alert" className="mx-5 mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
-
-        <div className="space-y-4 bg-slate-50/70 p-4 sm:p-5">
-          {stays.map((stay) => (
-            <article
-              key={stay.stay_id}
-              className="grid gap-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_180px_minmax(0,1fr)] md:items-center"
-            >
-              <StayEvidence
-                side="Entrada"
-                imageUrl={stay.entry_image_url}
-                time={stay.entry_time}
-              />
-
-              <div className="rounded-xl bg-indigo-50 px-4 py-5 text-center">
-                <p className="text-[11px] font-black uppercase tracking-widest text-indigo-400">
-                  Patente
-                </p>
-                <h3 className="mt-1 text-2xl font-black tracking-wide text-slate-900">
-                  {stay.resolved_plate}
-                </h3>
-                <span className="mt-3 inline-flex items-center gap-1.5 font-black text-indigo-700">
-                  <Clock3 size={16} /> {formatDuration(stay.duration_minutes)}
-                </span>
-                <p className="mt-2 text-[10px] font-bold uppercase text-slate-400">
-                  {stay.match_type}
-                </p>
-              </div>
-
-              <StayEvidence
-                side="Salida"
-                imageUrl={stay.exit_image_url}
-                time={stay.exit_time}
-              />
-            </article>
-          ))}
-          {!loading && stays.length === 0 && (
-            <p className="py-14 text-center text-slate-400">No hay estadías completas para estos filtros.</p>
-          )}
-        </div>
+        {error && <p role="alert" className="mx-5 mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
       </section>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <DashboardColumn
+          title="Entradas pendientes"
+          subtitle="Detecciones que parecen ingreso, sin salida asociada."
+          count={entradas.length}
+          empty="No hay entradas pendientes."
+        >
+          {entradas.map((item) => (
+            <DetectionCard
+              key={item.detection_id}
+              item={item}
+              role="entry"
+              selected={entry?.detection_id === item.detection_id}
+              busy={busy}
+              onUseAsEntry={() => markAsEntry(item)}
+              onUseAsExit={() => markAsExit(item)}
+              onDismiss={() => dismiss(item)}
+            />
+          ))}
+        </DashboardColumn>
+
+        <DashboardColumn
+          title="Salidas pendientes"
+          subtitle="Detecciones que parecen egreso, sin entrada asociada."
+          count={salidas.length}
+          empty="No hay salidas pendientes."
+        >
+          {salidas.map((item) => (
+            <DetectionCard
+              key={item.detection_id}
+              item={item}
+              role="exit"
+              selected={exit?.detection_id === item.detection_id}
+              busy={busy}
+              onUseAsEntry={() => markAsEntry(item)}
+              onUseAsExit={() => markAsExit(item)}
+              onDismiss={() => dismiss(item)}
+            />
+          ))}
+        </DashboardColumn>
+
+        <section className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col min-w-0">
+          <div className="mb-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-black text-slate-800">Sesiones completas</h2>
+              <span className="text-xs font-bold text-slate-500 rounded-lg bg-slate-100 px-2 py-1">{stays.length}</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">Estadías conciliadas, con entrada y salida.</p>
+          </div>
+          <div className="space-y-3">
+            {stays.map((stay) => (
+              <article key={stay.stay_id} className="rounded-xl border border-slate-200 p-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <StayEvidence side="Entrada" imageUrl={stay.entry_image_url} time={stay.entry_time} />
+                  <StayEvidence side="Salida" imageUrl={stay.exit_image_url} time={stay.exit_time} />
+                </div>
+                <div className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-center">
+                  <p className="text-lg font-black tracking-wide text-slate-900">{stay.resolved_plate}</p>
+                  <span className="inline-flex items-center gap-1.5 text-sm font-black text-indigo-700">
+                    <Clock3 size={14} /> {formatDuration(stay.duration_minutes)}
+                  </span>
+                  <p className="text-[10px] font-bold uppercase text-slate-400">{stay.match_type}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+          {stays.length === 0 && (
+            <p className="py-8 text-center text-sm text-slate-400">No hay estadías completas para estos filtros.</p>
+          )}
+        </section>
+      </div>
 
       <section className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex flex-wrap items-start gap-3 mb-4">
           <div className="mr-auto">
-            <h2 className="font-black text-slate-800">Por conciliar</h2>
-            <p className="text-sm text-slate-500">El OCR y la dirección son evidencia; no necesitan ser perfectos.</p>
+            <h2 className="font-black text-slate-800">Sin dirección clara</h2>
+            <p className="text-sm text-slate-500">
+              El clasificador no pudo decidir si es entrada o salida — resolvelo manualmente.
+            </p>
           </div>
           <div className="text-xs text-slate-500 rounded-lg bg-amber-50 px-3 py-2">
-            {detections.length} detección(es) pendientes
+            {triage.length} detección(es) por triar
           </div>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {detections.map((item) => (
-            <article key={item.detection_id}
-              className={`rounded-xl border p-3 ${entry?.detection_id === item.detection_id || exit?.detection_id === item.detection_id ? "border-indigo-400 bg-indigo-50" : "border-slate-200"}`}>
-              <div className="flex items-start gap-3">
-                {item.image_url
-                  ? <img src={item.image_url} alt="" className="h-16 w-24 rounded-lg object-cover bg-slate-100" />
-                  : <div className="h-16 w-24 rounded-lg bg-slate-100" />}
-                <div className="min-w-0">
-                  <p className="font-black text-slate-900">{item.detected_plate}</p>
-                  <p className="text-xs text-slate-500">{localTime(item.detected_at)}</p>
-                  <p className="mt-1 text-xs font-bold text-slate-500">
-                    OCR {confidence(item.confidence)} · {item.direction}
-                  </p>
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2 mt-3">
-                <button disabled={busy} onClick={() => { setEntry(item); if (!resolvedPlate) setResolvedPlate(item.normalized_plate); }}
-                  className="rounded-lg bg-emerald-100 py-2 text-xs font-black text-emerald-700 disabled:opacity-50">Entrada</button>
-                <button disabled={busy} onClick={() => { setExit(item); if (!resolvedPlate) setResolvedPlate(item.normalized_plate); }}
-                  className="rounded-lg bg-rose-100 py-2 text-xs font-black text-rose-700 disabled:opacity-50">Salida</button>
-                <button disabled={busy} onClick={() => dismiss(item)}
-                  className="rounded-lg bg-slate-100 py-2 text-xs font-black text-slate-600 disabled:opacity-50">Descartar</button>
-              </div>
-            </article>
+          {triage.map((item) => (
+            <DetectionCard
+              key={item.detection_id}
+              item={item}
+              role="triage"
+              selected={entry?.detection_id === item.detection_id || exit?.detection_id === item.detection_id}
+              busy={busy}
+              onUseAsEntry={() => markAsEntry(item)}
+              onUseAsExit={() => markAsExit(item)}
+              onDismiss={() => dismiss(item)}
+            />
           ))}
         </div>
 
-        {detections.length === 0 && !loading && (
-          <p className="py-10 text-center text-slate-400">No hay detecciones pendientes.</p>
-        )}
-
-        {(entry || exit) && (
-          <div className="mt-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-            <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
-              <p className="text-sm"><b>Entrada:</b> {entry ? `${entry.detected_plate} · ${localTime(entry.detected_at)}` : "Selecciona una"}</p>
-              <p className="text-sm"><b>Salida:</b> {exit ? `${exit.detected_plate} · ${localTime(exit.detected_at)}` : "Selecciona una"}</p>
-              <label className="text-xs font-bold text-slate-600">
-                Patente resuelta
-                <input value={resolvedPlate} onChange={(event) => setResolvedPlate(event.target.value.toUpperCase())}
-                  className="block mt-1 h-10 w-full rounded-lg border border-indigo-200 px-3 uppercase" />
-              </label>
-              <button onClick={reconcile} disabled={busy || !entry || !exit || !resolvedPlate.trim() || invalidOrder}
-                className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-black text-white disabled:opacity-40">
-                {busy ? "Guardando…" : "Crear estadía"}
-              </button>
-            </div>
-            {invalidOrder && <p className="mt-2 text-sm font-bold text-rose-600">La salida debe ser posterior a la entrada.</p>}
-          </div>
+        {triage.length === 0 && !loading && (
+          <p className="py-10 text-center text-slate-400">No hay detecciones sin dirección clara.</p>
         )}
       </section>
+
+      {(entry || exit) && (
+        <section className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+          <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
+            <p className="text-sm"><b>Entrada:</b> {entry ? `${entry.detected_plate} · ${localTime(entry.detected_at)}` : "Selecciona una"}</p>
+            <p className="text-sm"><b>Salida:</b> {exit ? `${exit.detected_plate} · ${localTime(exit.detected_at)}` : "Selecciona una"}</p>
+            <label className="text-xs font-bold text-slate-600">
+              Patente resuelta
+              <input value={resolvedPlate} onChange={(event) => setResolvedPlate(event.target.value.toUpperCase())}
+                className="block mt-1 h-10 w-full rounded-lg border border-indigo-200 px-3 uppercase" />
+            </label>
+            <button onClick={reconcile} disabled={busy || !entry || !exit || !resolvedPlate.trim() || invalidOrder}
+              className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-black text-white disabled:opacity-40">
+              {busy ? "Guardando…" : "Crear estadía"}
+            </button>
+          </div>
+          {invalidOrder && <p className="mt-2 text-sm font-bold text-rose-600">La salida debe ser posterior a la entrada.</p>}
+        </section>
+      )}
     </div>
   );
 }
