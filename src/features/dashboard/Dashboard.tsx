@@ -25,6 +25,32 @@ function confidence(value: number) {
   return `${Math.round(value * 100)} %`;
 }
 
+function StayEvidence({ side, imageUrl, time }: {
+  side: "Entrada" | "Salida";
+  imageUrl: string | null;
+  time: string | null;
+}) {
+  return (
+    <div className={side === "Salida" ? "md:text-right" : ""}>
+      <p className="mb-2 text-[11px] font-black uppercase tracking-widest text-slate-400">
+        {side}
+      </p>
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt={`Evidencia de ${side.toLowerCase()}`}
+          className="h-28 w-full rounded-xl bg-slate-100 object-cover"
+        />
+      ) : (
+        <div className="flex h-28 w-full items-center justify-center rounded-xl bg-slate-100 text-xs font-bold text-slate-400">
+          Sin foto de {side.toLowerCase()}
+        </div>
+      )}
+      <p className="mt-2 text-sm font-bold text-slate-600">{localTime(time)}</p>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [stays, setStays] = useState<ParkingStay[]>([]);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
@@ -133,33 +159,40 @@ export default function Dashboard() {
 
         {error && <p role="alert" className="mx-5 mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
-              <tr>
-                <th className="px-5 py-3">Patente resuelta</th>
-                <th className="px-5 py-3">Entrada</th>
-                <th className="px-5 py-3">Salida</th>
-                <th className="px-5 py-3">Tiempo dentro</th>
-                <th className="px-5 py-3">Conciliación</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {stays.map((stay) => (
-                <tr key={stay.stay_id}>
-                  <td className="px-5 py-4 font-black text-slate-800">{stay.resolved_plate}</td>
-                  <td className="px-5 py-4 text-slate-600">{localTime(stay.entry_time)}</td>
-                  <td className="px-5 py-4 text-slate-600">{localTime(stay.exit_time)}</td>
-                  <td className="px-5 py-4">
-                    <span className="inline-flex items-center gap-1.5 font-black text-indigo-700">
-                      <Clock3 size={15} /> {formatDuration(stay.duration_minutes)}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 text-xs font-bold text-slate-500">{stay.match_type}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-4 bg-slate-50/70 p-4 sm:p-5">
+          {stays.map((stay) => (
+            <article
+              key={stay.stay_id}
+              className="grid gap-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_180px_minmax(0,1fr)] md:items-center"
+            >
+              <StayEvidence
+                side="Entrada"
+                imageUrl={stay.entry_image_url}
+                time={stay.entry_time}
+              />
+
+              <div className="rounded-xl bg-indigo-50 px-4 py-5 text-center">
+                <p className="text-[11px] font-black uppercase tracking-widest text-indigo-400">
+                  Patente
+                </p>
+                <h3 className="mt-1 text-2xl font-black tracking-wide text-slate-900">
+                  {stay.resolved_plate}
+                </h3>
+                <span className="mt-3 inline-flex items-center gap-1.5 font-black text-indigo-700">
+                  <Clock3 size={16} /> {formatDuration(stay.duration_minutes)}
+                </span>
+                <p className="mt-2 text-[10px] font-bold uppercase text-slate-400">
+                  {stay.match_type}
+                </p>
+              </div>
+
+              <StayEvidence
+                side="Salida"
+                imageUrl={stay.exit_image_url}
+                time={stay.exit_time}
+              />
+            </article>
+          ))}
           {!loading && stays.length === 0 && (
             <p className="py-14 text-center text-slate-400">No hay estadías completas para estos filtros.</p>
           )}

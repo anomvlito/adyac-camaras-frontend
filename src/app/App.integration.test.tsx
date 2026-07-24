@@ -56,6 +56,8 @@ describe("application flow characterization", () => {
 
     expect(await screen.findByRole("heading", { name: "Estadías" })).toBeTruthy();
     expect(screen.getByText("1 h 27 min")).toBeTruthy();
+    expect(screen.getByText("Sin foto de entrada")).toBeTruthy();
+    expect(screen.getByText("Sin foto de salida")).toBeTruthy();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
     await userEvent.click(screen.getByRole("button", { name: "Historial" }));
