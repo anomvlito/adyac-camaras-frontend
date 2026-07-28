@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clock3, RefreshCw } from "lucide-react";
+import { Clock3, RefreshCw, X } from "lucide-react";
 import { DASHBOARD_REFRESH_MS } from "@/lib/constants";
 import {
   type DetectionEvent,
@@ -33,6 +33,71 @@ function confidence(value: number) {
   return `${Math.round(value * 100)} %`;
 }
 
+function ZoomableImage({
+  src,
+  alt,
+  className,
+  eager = false,
+}: {
+  src: string;
+  alt: string;
+  className: string;
+  eager?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [open]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="block w-full cursor-zoom-in"
+        aria-label={`Ampliar ${alt.toLowerCase()}`}
+      >
+        <img
+          src={src}
+          alt={alt}
+          loading={eager ? "eager" : "lazy"}
+          className={className}
+        />
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={alt}
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 p-4"
+        >
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Cerrar imagen ampliada"
+            className="absolute right-4 top-4 rounded-full bg-white/15 p-3 text-white hover:bg-white/25"
+          >
+            <X size={24} />
+          </button>
+          <img
+            src={src}
+            alt={alt}
+            onClick={(event) => event.stopPropagation()}
+            className="max-h-[90vh] max-w-full rounded-xl object-contain shadow-2xl"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
 function StayEvidence({ side, imageUrl, time }: {
   side: "Entrada" | "Salida";
   imageUrl: string | null;
@@ -44,7 +109,7 @@ function StayEvidence({ side, imageUrl, time }: {
         {side}
       </p>
       {imageUrl ? (
-        <img
+        <ZoomableImage
           src={imageUrl}
           alt={`Evidencia de ${side.toLowerCase()}`}
           className="h-28 w-full rounded-xl bg-slate-100 object-cover"
@@ -80,7 +145,13 @@ function DetectionCard({
     >
       <div className="flex items-start gap-3">
         {item.image_url ? (
-          <img src={item.image_url} alt="" className="h-16 w-24 rounded-lg object-cover bg-slate-100" />
+          <div className="w-24 shrink-0">
+            <ZoomableImage
+              src={item.image_url}
+              alt={`Detección ${item.detected_plate}`}
+              className="h-16 w-24 rounded-lg bg-slate-100 object-cover"
+            />
+          </div>
         ) : (
           <div className="h-16 w-24 rounded-lg bg-slate-100" />
         )}
@@ -312,8 +383,28 @@ export default function Dashboard() {
       {(entry || exit) && (
         <section className="sticky top-20 z-30 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
           <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto_auto] md:items-end">
-            <p className="text-sm"><b>Entrada:</b> {entry ? `${entry.detected_plate} · ${localTime(entry.detected_at)}` : "Selecciona una"}</p>
-            <p className="text-sm"><b>Salida:</b> {exit ? `${exit.detected_plate} · ${localTime(exit.detected_at)}` : "Selecciona una"}</p>
+            <div className="text-sm">
+              {entry?.image_url && (
+                <ZoomableImage
+                  src={entry.image_url}
+                  alt={`Entrada ${entry.detected_plate}`}
+                  className="mb-2 h-24 w-full rounded-xl bg-white object-cover"
+                  eager
+                />
+              )}
+              <p><b>Entrada:</b> {entry ? `${entry.detected_plate} · ${localTime(entry.detected_at)}` : "Selecciona una"}</p>
+            </div>
+            <div className="text-sm">
+              {exit?.image_url && (
+                <ZoomableImage
+                  src={exit.image_url}
+                  alt={`Salida ${exit.detected_plate}`}
+                  className="mb-2 h-24 w-full rounded-xl bg-white object-cover"
+                  eager
+                />
+              )}
+              <p><b>Salida:</b> {exit ? `${exit.detected_plate} · ${localTime(exit.detected_at)}` : "Selecciona una"}</p>
+            </div>
             <label className="text-xs font-bold text-slate-600">
               Patente resuelta
               <input value={resolvedPlate} onChange={(event) => setResolvedPlate(event.target.value.toUpperCase())}
@@ -349,6 +440,22 @@ export default function Dashboard() {
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {proposals.map((proposal) => (
             <article key={`${proposal.entry.detection_id}-${proposal.exit.detection_id}`} className="rounded-xl border border-slate-200 p-3">
+              <div className="mb-3 grid grid-cols-2 gap-2">
+                {proposal.entry.image_url ? (
+                  <ZoomableImage
+                    src={proposal.entry.image_url}
+                    alt={`Entrada propuesta ${proposal.entry.detected_plate}`}
+                    className="h-20 w-full rounded-lg bg-slate-100 object-cover"
+                  />
+                ) : <div className="h-20 rounded-lg bg-slate-100" />}
+                {proposal.exit.image_url ? (
+                  <ZoomableImage
+                    src={proposal.exit.image_url}
+                    alt={`Salida propuesta ${proposal.exit.detected_plate}`}
+                    className="h-20 w-full rounded-lg bg-slate-100 object-cover"
+                  />
+                ) : <div className="h-20 rounded-lg bg-slate-100" />}
+              </div>
               <p className="font-black text-slate-900">{proposal.resolved_plate}</p>
               <p className="text-xs text-slate-500">
                 {localTime(proposal.entry.detected_at)} → {localTime(proposal.exit.detected_at)}
@@ -478,7 +585,11 @@ export default function Dashboard() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {reviewImages.slice(0, 12).map((image) => (
             <article key={image.filename} className="rounded-xl border border-slate-200 p-3">
-              <img src={image.url} alt="Evidencia pendiente de OCR" className="h-28 w-full rounded-lg object-cover" />
+              <ZoomableImage
+                src={image.url}
+                alt="Evidencia pendiente de OCR"
+                className="h-28 w-full rounded-lg object-cover"
+              />
               <input
                 value={reviewPlates[image.filename] || ""}
                 onChange={(event) => setReviewPlates((current) => ({
