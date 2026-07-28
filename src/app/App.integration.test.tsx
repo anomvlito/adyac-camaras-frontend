@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./page";
 import LoginPage from "@/features/auth/LoginPage";
 import { AUTH_STORAGE_KEY } from "@/lib/auth";
-import { currentOperationalDate } from "@/lib/stays";
+import { currentOperationalDate, previousOperationalDate } from "@/lib/stays";
 
 function jsonResponse(data: unknown, status = 200): Response {
   return {
@@ -68,6 +68,24 @@ describe("application flow characterization", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
     const dashboardUrls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(dashboardUrls.every(url => url.includes(`date=${currentOperationalDate()}`))).toBe(true);
+
+    const nextButton = screen.getByRole("button", { name: "Día siguiente" });
+    expect(nextButton).toHaveProperty("disabled", true);
+    await userEvent.click(screen.getByRole("button", { name: "Día anterior" }));
+    expect(screen.getByLabelText("Fecha")).toHaveProperty(
+      "value",
+      previousOperationalDate(currentOperationalDate()),
+    );
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([url]) => String(url));
+      expect(urls.some(url => url.includes(
+        `date=${previousOperationalDate(currentOperationalDate())}`,
+      ))).toBe(true);
+    });
+    expect(nextButton).toHaveProperty("disabled", false);
+    await userEvent.click(nextButton);
+    expect(screen.getByLabelText("Fecha")).toHaveProperty("value", currentOperationalDate());
+    expect(nextButton).toHaveProperty("disabled", true);
 
     await userEvent.click(screen.getByRole("button", { name: "Historial" }));
     expect(await screen.findByRole("button", { name: "Todos" })).toBeTruthy();
