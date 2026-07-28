@@ -5,7 +5,8 @@ export type DetectionMatchStatus =
   | "UNMATCHED"
   | "MATCHED_ENTRY"
   | "MATCHED_EXIT"
-  | "DISMISSED";
+  | "DISMISSED"
+  | "INVALID_FORMAT";
 
 export type DetectionEvent = {
   detection_id: number;
@@ -34,6 +35,25 @@ export type ParkingStay = {
   entry_image_url: string | null;
   exit_image_url: string | null;
   fee: number;
+};
+
+export type StayProposal = {
+  entry: DetectionEvent;
+  exit: DetectionEvent;
+  resolved_plate: string;
+  match_type: "EXACT" | "FUZZY";
+  distance: number;
+  score: number;
+  duration_minutes: number;
+};
+
+export type ReviewImage = {
+  filename: string;
+  plate: string | null;
+  time: string | null;
+  date: string | null;
+  reason?: string;
+  url: string;
 };
 
 async function responseJson<T>(response: Response): Promise<T> {
@@ -87,6 +107,49 @@ export async function fetchUnmatchedDetections(date: string, includePreviousDay 
   return Array.from(
     new Map(pages.flat().map((item) => [item.detection_id, item])).values()
   ).sort((a, b) => b.detected_at.localeCompare(a.detected_at));
+}
+
+export async function fetchInvalidDetections(date: string) {
+  const params = new URLSearchParams({
+    match_status: "INVALID_FORMAT",
+    limit: "200",
+    date,
+  });
+  return responseJson<DetectionEvent[]>(
+    await apiFetch(`${API}/api/detections?${params}`)
+  );
+}
+
+export async function fetchStayProposals(date: string) {
+  const params = new URLSearchParams({ date, limit: "100" });
+  return responseJson<StayProposal[]>(
+    await apiFetch(`${API}/api/stay-proposals?${params}`)
+  );
+}
+
+export async function fetchReviewImages(date: string) {
+  const params = new URLSearchParams({ date, limit: "50" });
+  const payload = await responseJson<{ images: ReviewImage[] }>(
+    await apiFetch(`${API}/api/monitor/review?${params}`)
+  );
+  return payload.images.map((image) => ({
+    ...image,
+    url: image.url.startsWith("/") ? `${API}${image.url}` : image.url,
+  }));
+}
+
+export async function promoteReviewImage(input: {
+  date: string;
+  filename: string;
+  plate: string;
+}) {
+  return responseJson<{ detection_id: number; match_status: "UNMATCHED" }>(
+    await apiFetch(`${API}/api/monitor/review/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
 }
 
 export async function reconcileDetections(input: {
