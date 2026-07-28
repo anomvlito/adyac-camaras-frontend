@@ -8,6 +8,7 @@ import {
   type ParkingStay,
   type ReviewImage,
   type StayProposal,
+  autoReconcileExact,
   currentOperationalDate,
   dismissDetection,
   fetchStays,
@@ -151,6 +152,7 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      await autoReconcileExact(date);
       const [nextStays, nextDetections, nextInvalid, nextProposals, nextReview] = await Promise.all([
         fetchStays(date, plate.trim() || undefined),
         fetchUnmatchedDetections(date, includePreviousDay),

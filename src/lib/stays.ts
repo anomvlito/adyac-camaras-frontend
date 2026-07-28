@@ -127,6 +127,15 @@ export async function fetchStayProposals(date: string) {
   );
 }
 
+export async function autoReconcileExact(date: string) {
+  const params = new URLSearchParams({ date, limit: "200" });
+  return responseJson<{ date: string; reconciled: number; skipped: number }>(
+    await apiFetch(`${API}/api/stays/auto-reconcile-exact?${params}`, {
+      method: "POST",
+    })
+  );
+}
+
 export async function fetchReviewImages(date: string) {
   const params = new URLSearchParams({ date, limit: "50" });
   const payload = await responseJson<{ images: ReviewImage[] }>(
