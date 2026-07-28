@@ -6,6 +6,7 @@ import { DASHBOARD_REFRESH_MS } from "@/lib/constants";
 import {
   type DetectionEvent,
   type ParkingStay,
+  currentOperationalDate,
   dismissDetection,
   fetchStays,
   fetchUnmatchedDetections,
@@ -51,11 +52,8 @@ function StayEvidence({ side, imageUrl, time }: {
   );
 }
 
-type DetectionRole = "entry" | "exit" | "triage";
-
 function DetectionCard({
   item,
-  role,
   selected,
   busy,
   onUseAsEntry,
@@ -63,7 +61,6 @@ function DetectionCard({
   onDismiss,
 }: {
   item: DetectionEvent;
-  role: DetectionRole;
   selected: boolean;
   busy: boolean;
   onUseAsEntry: () => void;
@@ -88,19 +85,15 @@ function DetectionCard({
           </p>
         </div>
       </div>
-      <div className={`grid gap-2 mt-3 ${role === "triage" ? "grid-cols-3" : "grid-cols-2"}`}>
-        {role !== "exit" && (
-          <button disabled={busy} onClick={onUseAsEntry}
-            className="rounded-lg bg-emerald-100 py-2 text-xs font-black text-emerald-700 disabled:opacity-50">
-            {role === "triage" ? "Es entrada" : "Usar como entrada"}
-          </button>
-        )}
-        {role !== "entry" && (
-          <button disabled={busy} onClick={onUseAsExit}
-            className="rounded-lg bg-rose-100 py-2 text-xs font-black text-rose-700 disabled:opacity-50">
-            {role === "triage" ? "Es salida" : "Usar como salida"}
-          </button>
-        )}
+      <div className="grid grid-cols-3 gap-2 mt-3">
+        <button disabled={busy} onClick={onUseAsEntry}
+          className="rounded-lg bg-emerald-100 py-2 text-xs font-black text-emerald-700 disabled:opacity-50">
+          Entrada
+        </button>
+        <button disabled={busy} onClick={onUseAsExit}
+          className="rounded-lg bg-rose-100 py-2 text-xs font-black text-rose-700 disabled:opacity-50">
+          Salida
+        </button>
         <button disabled={busy} onClick={onDismiss}
           className="rounded-lg bg-slate-100 py-2 text-xs font-black text-slate-600 disabled:opacity-50">
           Descartar
@@ -135,7 +128,8 @@ function DashboardColumn({ title, subtitle, count, children, empty }: {
 export default function Dashboard() {
   const [stays, setStays] = useState<ParkingStay[]>([]);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState(currentOperationalDate);
+  const [includePreviousDay, setIncludePreviousDay] = useState(false);
   const [plate, setPlate] = useState("");
   const [entry, setEntry] = useState<DetectionEvent | null>(null);
   const [exit, setExit] = useState<DetectionEvent | null>(null);
@@ -148,8 +142,8 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const [nextStays, nextDetections] = await Promise.all([
-        fetchStays(date || undefined, plate.trim() || undefined),
-        fetchUnmatchedDetections(date || undefined),
+        fetchStays(date, plate.trim() || undefined),
+        fetchUnmatchedDetections(date, includePreviousDay),
       ]);
       setStays(nextStays);
       setDetections(nextDetections);
@@ -159,7 +153,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [date, plate]);
+  }, [date, includePreviousDay, plate]);
 
   useEffect(() => {
     load();
@@ -225,6 +219,16 @@ export default function Dashboard() {
     setExit(item);
     if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
   };
+  const clearSelection = () => {
+    setEntry(null);
+    setExit(null);
+    setResolvedPlate("");
+  };
+  const changeDate = (nextDate: string) => {
+    if (!nextDate) return;
+    clearSelection();
+    setDate(nextDate);
+  };
 
   return (
     <div className="space-y-6">
@@ -236,8 +240,19 @@ export default function Dashboard() {
           </div>
           <label className="text-xs font-bold text-slate-500">
             Fecha
-            <input type="date" value={date} onChange={(event) => setDate(event.target.value)}
+            <input type="date" value={date} onChange={(event) => changeDate(event.target.value)}
               className="block mt-1 h-10 rounded-lg border border-slate-200 px-3 text-sm font-medium" />
+          </label>
+          <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-bold text-slate-600">
+            <input
+              type="checkbox"
+              checked={includePreviousDay}
+              onChange={(event) => {
+                clearSelection();
+                setIncludePreviousDay(event.target.checked);
+              }}
+            />
+            Incluir pendientes del día anterior
           </label>
           <label className="text-xs font-bold text-slate-500">
             Patente
@@ -254,6 +269,35 @@ export default function Dashboard() {
         {error && <p role="alert" className="mx-5 mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
       </section>
 
+      {(entry || exit) && (
+        <section className="sticky top-20 z-30 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+          <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto_auto] md:items-end">
+            <p className="text-sm"><b>Entrada:</b> {entry ? `${entry.detected_plate} · ${localTime(entry.detected_at)}` : "Selecciona una"}</p>
+            <p className="text-sm"><b>Salida:</b> {exit ? `${exit.detected_plate} · ${localTime(exit.detected_at)}` : "Selecciona una"}</p>
+            <label className="text-xs font-bold text-slate-600">
+              Patente resuelta
+              <input value={resolvedPlate} onChange={(event) => setResolvedPlate(event.target.value.toUpperCase())}
+                className="block mt-1 h-10 w-full rounded-lg border border-indigo-200 px-3 uppercase" />
+            </label>
+            <button onClick={reconcile} disabled={busy || !entry || !exit || !resolvedPlate.trim() || invalidOrder}
+              className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-black text-white disabled:opacity-40">
+              {busy ? "Guardando…" : "Crear estadía"}
+            </button>
+            <button onClick={clearSelection} disabled={busy}
+              className="h-10 rounded-lg bg-white px-4 text-sm font-black text-slate-600 disabled:opacity-40">
+              Limpiar
+            </button>
+          </div>
+          {invalidOrder ? (
+            <p className="mt-2 text-sm font-bold text-rose-600">La salida debe ser posterior a la entrada.</p>
+          ) : (!entry || !exit) && (
+            <p className="mt-2 text-sm font-semibold text-indigo-700">
+              Selecciona una entrada y una salida para habilitar la conciliación.
+            </p>
+          )}
+        </section>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-3">
         <DashboardColumn
           title="Entradas pendientes"
@@ -265,7 +309,6 @@ export default function Dashboard() {
             <DetectionCard
               key={item.detection_id}
               item={item}
-              role="entry"
               selected={entry?.detection_id === item.detection_id}
               busy={busy}
               onUseAsEntry={() => markAsEntry(item)}
@@ -285,7 +328,6 @@ export default function Dashboard() {
             <DetectionCard
               key={item.detection_id}
               item={item}
-              role="exit"
               selected={exit?.detection_id === item.detection_id}
               busy={busy}
               onUseAsEntry={() => markAsEntry(item)}
@@ -344,7 +386,6 @@ export default function Dashboard() {
             <DetectionCard
               key={item.detection_id}
               item={item}
-              role="triage"
               selected={entry?.detection_id === item.detection_id || exit?.detection_id === item.detection_id}
               busy={busy}
               onUseAsEntry={() => markAsEntry(item)}
@@ -359,24 +400,6 @@ export default function Dashboard() {
         )}
       </section>
 
-      {(entry || exit) && (
-        <section className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-          <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
-            <p className="text-sm"><b>Entrada:</b> {entry ? `${entry.detected_plate} · ${localTime(entry.detected_at)}` : "Selecciona una"}</p>
-            <p className="text-sm"><b>Salida:</b> {exit ? `${exit.detected_plate} · ${localTime(exit.detected_at)}` : "Selecciona una"}</p>
-            <label className="text-xs font-bold text-slate-600">
-              Patente resuelta
-              <input value={resolvedPlate} onChange={(event) => setResolvedPlate(event.target.value.toUpperCase())}
-                className="block mt-1 h-10 w-full rounded-lg border border-indigo-200 px-3 uppercase" />
-            </label>
-            <button onClick={reconcile} disabled={busy || !entry || !exit || !resolvedPlate.trim() || invalidOrder}
-              className="h-10 rounded-lg bg-indigo-600 px-4 text-sm font-black text-white disabled:opacity-40">
-              {busy ? "Guardando…" : "Crear estadía"}
-            </button>
-          </div>
-          {invalidOrder && <p className="mt-2 text-sm font-bold text-rose-600">La salida debe ser posterior a la entrada.</p>}
-        </section>
-      )}
     </div>
   );
 }

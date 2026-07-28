@@ -42,6 +42,23 @@ async function responseJson<T>(response: Response): Promise<T> {
   throw new Error(payload.detail || `Error ${response.status}`);
 }
 
+export function currentOperationalDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+export function previousOperationalDate(date: string) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return value.toISOString().slice(0, 10);
+}
+
 export async function fetchStays(date?: string, plate?: string) {
   const params = new URLSearchParams({ status: "COMPLETED", limit: "200" });
   if (date) params.set("date", date);
@@ -51,12 +68,25 @@ export async function fetchStays(date?: string, plate?: string) {
   );
 }
 
-export async function fetchUnmatchedDetections(date?: string) {
-  const params = new URLSearchParams({ match_status: "UNMATCHED", limit: "200" });
-  if (date) params.set("date", date);
+async function fetchUnmatchedForDate(date: string) {
+  const params = new URLSearchParams({
+    match_status: "UNMATCHED",
+    limit: "200",
+    date,
+  });
   return responseJson<DetectionEvent[]>(
     await apiFetch(`${API}/api/detections?${params}`)
   );
+}
+
+export async function fetchUnmatchedDetections(date: string, includePreviousDay = false) {
+  const dates = includePreviousDay
+    ? [date, previousOperationalDate(date)]
+    : [date];
+  const pages = await Promise.all(dates.map(fetchUnmatchedForDate));
+  return Array.from(
+    new Map(pages.flat().map((item) => [item.detection_id, item])).values()
+  ).sort((a, b) => b.detected_at.localeCompare(a.detected_at));
 }
 
 export async function reconcileDetections(input: {
