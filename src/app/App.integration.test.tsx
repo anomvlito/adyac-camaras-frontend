@@ -46,7 +46,9 @@ describe("application flow characterization", () => {
         exit_image_url: null,
         fee: 0,
       }]));
+      if (url.includes("/api/stay-proposals")) return Promise.resolve(jsonResponse([]));
       if (url.includes("/api/detections")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/monitor/review")) return Promise.resolve(jsonResponse({ images: [] }));
       if (url.includes("/api/sightings")) return Promise.resolve(jsonResponse({ sightings: [] }));
       if (url.includes("/api/history")) return Promise.resolve(jsonResponse([]));
       return Promise.resolve(jsonResponse({}));
@@ -60,7 +62,7 @@ describe("application flow characterization", () => {
     expect(screen.getByText("Sin foto de entrada")).toBeTruthy();
     expect(screen.getByText("Sin foto de salida")).toBeTruthy();
     expect(screen.getByLabelText("Fecha")).toHaveProperty("value", currentOperationalDate());
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
     const dashboardUrls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(dashboardUrls.every(url => url.includes(`date=${currentOperationalDate()}`))).toBe(true);
 

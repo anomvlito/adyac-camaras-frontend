@@ -6,12 +6,18 @@ import { DASHBOARD_REFRESH_MS } from "@/lib/constants";
 import {
   type DetectionEvent,
   type ParkingStay,
+  type ReviewImage,
+  type StayProposal,
   currentOperationalDate,
   dismissDetection,
   fetchStays,
+  fetchInvalidDetections,
+  fetchReviewImages,
+  fetchStayProposals,
   fetchUnmatchedDetections,
   formatDuration,
   reconcileDetections,
+  promoteReviewImage,
 } from "@/lib/stays";
 
 function localTime(value: string | null) {
@@ -128,6 +134,10 @@ function DashboardColumn({ title, subtitle, count, children, empty }: {
 export default function Dashboard() {
   const [stays, setStays] = useState<ParkingStay[]>([]);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
+  const [invalidDetections, setInvalidDetections] = useState<DetectionEvent[]>([]);
+  const [proposals, setProposals] = useState<StayProposal[]>([]);
+  const [reviewImages, setReviewImages] = useState<ReviewImage[]>([]);
+  const [reviewPlates, setReviewPlates] = useState<Record<string, string>>({});
   const [date, setDate] = useState(currentOperationalDate);
   const [includePreviousDay, setIncludePreviousDay] = useState(false);
   const [plate, setPlate] = useState("");
@@ -141,12 +151,18 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextStays, nextDetections] = await Promise.all([
+      const [nextStays, nextDetections, nextInvalid, nextProposals, nextReview] = await Promise.all([
         fetchStays(date, plate.trim() || undefined),
         fetchUnmatchedDetections(date, includePreviousDay),
+        fetchInvalidDetections(date),
+        fetchStayProposals(date),
+        fetchReviewImages(date),
       ]);
       setStays(nextStays);
       setDetections(nextDetections);
+      setInvalidDetections(nextInvalid);
+      setProposals(nextProposals);
+      setReviewImages(nextReview);
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo actualizar");
@@ -218,6 +234,28 @@ export default function Dashboard() {
   const markAsExit = (item: DetectionEvent) => {
     setExit(item);
     if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
+  };
+  const reviewProposal = (proposal: StayProposal) => {
+    setEntry(proposal.entry);
+    setExit(proposal.exit);
+    setResolvedPlate(proposal.resolved_plate);
+  };
+  const promoteImage = async (image: ReviewImage) => {
+    const value = (reviewPlates[image.filename] || "").trim().toUpperCase();
+    if (value.replace(/[^A-Z0-9]/g, "").length !== 6) {
+      setError("La patente debe tener exactamente 6 caracteres.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await promoteReviewImage({ date, filename: image.filename, plate: value });
+      setReviewPlates((current) => ({ ...current, [image.filename]: "" }));
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo recuperar la imagen");
+    } finally {
+      setBusy(false);
+    }
   };
   const clearSelection = () => {
     setEntry(null);
@@ -297,6 +335,34 @@ export default function Dashboard() {
           )}
         </section>
       )}
+
+      <section className="rounded-2xl border border-indigo-200 bg-white p-5">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-black text-slate-800">Propuestas de conciliación</h2>
+            <p className="text-sm text-slate-500">Son sugerencias; ninguna crea una estadía sin tu confirmación.</p>
+          </div>
+          <span className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700">{proposals.length}</span>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {proposals.map((proposal) => (
+            <article key={`${proposal.entry.detection_id}-${proposal.exit.detection_id}`} className="rounded-xl border border-slate-200 p-3">
+              <p className="font-black text-slate-900">{proposal.resolved_plate}</p>
+              <p className="text-xs text-slate-500">
+                {localTime(proposal.entry.detected_at)} → {localTime(proposal.exit.detected_at)}
+              </p>
+              <p className="mt-1 text-xs font-bold text-indigo-600">
+                {proposal.match_type} · {formatDuration(proposal.duration_minutes)}
+              </p>
+              <button onClick={() => reviewProposal(proposal)} disabled={busy}
+                className="mt-3 w-full rounded-lg bg-indigo-600 py-2 text-xs font-black text-white disabled:opacity-50">
+                Revisar propuesta
+              </button>
+            </article>
+          ))}
+        </div>
+        {proposals.length === 0 && !loading && <p className="py-6 text-center text-sm text-slate-400">No hay propuestas para esta fecha.</p>}
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <DashboardColumn
@@ -399,6 +465,36 @@ export default function Dashboard() {
           <p className="py-10 text-center text-slate-400">No hay detecciones sin dirección clara.</p>
         )}
       </section>
+
+      <details className="rounded-2xl border border-slate-200 bg-white p-5">
+        <summary className="cursor-pointer font-black text-slate-800">
+          Evidencia fuera de conciliación ({invalidDetections.length} formato inválido · {reviewImages.length} sin OCR)
+        </summary>
+        <p className="mt-2 text-sm text-slate-500">
+          Nada se borra. Las lecturas inválidas se conservan y las imágenes sin OCR pueden recuperarse con una patente de 6 caracteres.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {reviewImages.slice(0, 12).map((image) => (
+            <article key={image.filename} className="rounded-xl border border-slate-200 p-3">
+              <img src={image.url} alt="Evidencia pendiente de OCR" className="h-28 w-full rounded-lg object-cover" />
+              <input
+                value={reviewPlates[image.filename] || ""}
+                onChange={(event) => setReviewPlates((current) => ({
+                  ...current,
+                  [image.filename]: event.target.value.toUpperCase(),
+                }))}
+                placeholder="ABC123"
+                maxLength={8}
+                className="mt-2 h-9 w-full rounded-lg border border-slate-200 px-3 text-sm font-bold uppercase"
+              />
+              <button onClick={() => promoteImage(image)} disabled={busy}
+                className="mt-2 w-full rounded-lg bg-slate-800 py-2 text-xs font-black text-white disabled:opacity-50">
+                Incorporar a conciliación
+              </button>
+            </article>
+          ))}
+        </div>
+      </details>
 
     </div>
   );
