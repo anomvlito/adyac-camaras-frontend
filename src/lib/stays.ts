@@ -79,6 +79,12 @@ export function previousOperationalDate(date: string) {
   return value.toISOString().slice(0, 10);
 }
 
+export function nextOperationalDate(date: string) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + 1);
+  return value.toISOString().slice(0, 10);
+}
+
 export async function fetchStays(date?: string, plate?: string) {
   const params = new URLSearchParams({ status: "COMPLETED", limit: "200" });
   if (date) params.set("date", date);

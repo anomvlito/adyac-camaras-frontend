@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clock3, RefreshCw, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, RefreshCw, X } from "lucide-react";
 import { DASHBOARD_REFRESH_MS } from "@/lib/constants";
 import {
   type DetectionEvent,
@@ -17,6 +17,8 @@ import {
   fetchStayProposals,
   fetchUnmatchedDetections,
   formatDuration,
+  nextOperationalDate,
+  previousOperationalDate,
   reconcileDetections,
   promoteReviewImage,
 } from "@/lib/stays";
@@ -204,6 +206,7 @@ function DashboardColumn({ title, subtitle, count, children, empty }: {
 }
 
 export default function Dashboard() {
+  const today = currentOperationalDate();
   const [stays, setStays] = useState<ParkingStay[]>([]);
   const [detections, setDetections] = useState<DetectionEvent[]>([]);
   const [invalidDetections, setInvalidDetections] = useState<DetectionEvent[]>([]);
@@ -336,9 +339,14 @@ export default function Dashboard() {
     setResolvedPlate("");
   };
   const changeDate = (nextDate: string) => {
-    if (!nextDate) return;
+    if (!nextDate || nextDate > today) return;
     clearSelection();
     setDate(nextDate);
+  };
+  const goToPreviousDay = () => changeDate(previousOperationalDate(date));
+  const goToNextDay = () => {
+    if (date >= today) return;
+    changeDate(nextOperationalDate(date));
   };
 
   return (
@@ -349,11 +357,40 @@ export default function Dashboard() {
             <h1 className="text-xl font-black text-slate-900">Dashboard</h1>
             <p className="text-sm text-slate-500">Entradas y salidas pendientes de conciliar, y estadías completas.</p>
           </div>
-          <label className="text-xs font-bold text-slate-500">
-            Fecha
-            <input type="date" value={date} onChange={(event) => changeDate(event.target.value)}
-              className="block mt-1 h-10 rounded-lg border border-slate-200 px-3 text-sm font-medium" />
-          </label>
+          <div>
+            <span className="text-xs font-bold text-slate-500">Fecha</span>
+            <div className="mt-1 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={goToPreviousDay}
+                aria-label="Día anterior"
+                title="Día anterior"
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <label>
+                <span className="sr-only">Fecha</span>
+                <input
+                  type="date"
+                  value={date}
+                  max={today}
+                  onChange={(event) => changeDate(event.target.value)}
+                  className="h-10 rounded-lg border border-slate-200 px-3 text-sm font-medium"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={goToNextDay}
+                disabled={date >= today}
+                aria-label="Día siguiente"
+                title={date >= today ? "Ya estás en el día actual" : "Día siguiente"}
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
           <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-bold text-slate-600">
             <input
               type="checkbox"

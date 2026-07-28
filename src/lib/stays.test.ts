@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   currentOperationalDate,
   fetchUnmatchedDetections,
+  nextOperationalDate,
   previousOperationalDate,
 } from "./stays";
 
@@ -20,6 +21,10 @@ describe("operational dates", () => {
 
   it("gets the previous calendar day across month boundaries", () => {
     expect(previousOperationalDate("2026-08-01")).toBe("2026-07-31");
+  });
+
+  it("gets the next calendar day across month boundaries", () => {
+    expect(nextOperationalDate("2026-07-31")).toBe("2026-08-01");
   });
 
   it("loads only the selected and explicitly requested previous day", async () => {
