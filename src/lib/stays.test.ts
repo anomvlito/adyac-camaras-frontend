@@ -4,6 +4,7 @@ import {
   fetchUnmatchedDetections,
   nextOperationalDate,
   previousOperationalDate,
+  setDetectionDirection,
 } from "./stays";
 
 afterEach(() => {
@@ -40,5 +41,39 @@ describe("operational dates", () => {
     expect(urls).toHaveLength(2);
     expect(urls.some((url) => url.includes("date=2026-08-01"))).toBe(true);
     expect(urls.some((url) => url.includes("date=2026-07-31"))).toBe(true);
+  });
+});
+
+describe("setDetectionDirection", () => {
+  it("PATCHes the detection with action set_direction and the chosen direction", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ detection_id: 42, direction: "APPROACHING" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await setDetectionDirection(42, "APPROACHING");
+
+    expect(result).toEqual({ detection_id: 42, direction: "APPROACHING" });
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/api/detections/42");
+    expect(options.method).toBe("PATCH");
+    expect(JSON.parse(options.body)).toEqual({
+      action: "set_direction",
+      direction: "APPROACHING",
+    });
+  });
+
+  it("surfaces the backend error when the detection is already resolved", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: "La detección ya tiene una dirección resuelta" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(setDetectionDirection(42, "DEPARTING")).rejects.toThrow(
+      "La detección ya tiene una dirección resuelta"
+    );
   });
 });
