@@ -21,6 +21,7 @@ import {
   previousOperationalDate,
   reconcileDetections,
   promoteReviewImage,
+  setDetectionDirection,
 } from "@/lib/stays";
 
 function localTime(value: string | null) {
@@ -303,13 +304,29 @@ export default function Dashboard() {
     }
   };
 
+  const persistDirection = async (item: DetectionEvent, direction: "APPROACHING" | "DEPARTING") => {
+    setBusy(true);
+    try {
+      await setDetectionDirection(item.detection_id, direction);
+      setDetections((current) =>
+        current.map((d) => (d.detection_id === item.detection_id ? { ...d, direction } : d))
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo clasificar la dirección");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const markAsEntry = (item: DetectionEvent) => {
     setEntry(item);
     if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
+    if (item.direction === "UNKNOWN") persistDirection(item, "APPROACHING");
   };
   const markAsExit = (item: DetectionEvent) => {
     setExit(item);
     if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
+    if (item.direction === "UNKNOWN") persistDirection(item, "DEPARTING");
   };
   const reviewProposal = (proposal: StayProposal) => {
     setEntry(proposal.entry);

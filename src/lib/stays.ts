@@ -191,6 +191,19 @@ export async function dismissDetection(detectionId: number) {
   );
 }
 
+export async function setDetectionDirection(
+  detectionId: number,
+  direction: "APPROACHING" | "DEPARTING"
+) {
+  return responseJson<{ detection_id: number; direction: DetectionDirection }>(
+    await apiFetch(`${API}/api/detections/${detectionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_direction", direction }),
+    })
+  );
+}
+
 export function formatDuration(minutes: number | null) {
   if (minutes == null) return "Pendiente";
   if (minutes < 60) return `${minutes} min`;
