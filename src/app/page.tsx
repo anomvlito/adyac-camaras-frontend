@@ -8,6 +8,7 @@ import LoginPage from "@/features/auth/LoginPage";
 import Dashboard from "@/features/dashboard/Dashboard";
 import HistoryView from "@/features/history/HistoryView";
 import ReconciliationView from "@/features/reconciliation/ReconciliationView";
+import AbonadosView from "@/features/abonados/AbonadosView";
 import { AUTH_EXPIRED_EVENT, getAuth, setAuth } from "@/lib/auth";
 import type { AuthState } from "@/lib/types";
 
@@ -15,7 +16,7 @@ export default function App() {
   const [auth, setAuthState]  = useState<AuthState>(() =>
     typeof window === "undefined" ? null : getAuth()
   );
-  const [tab, setTab]         = useState<"dashboard" | "historial" | "reconciliacion">("dashboard");
+  const [tab, setTab]         = useState<"dashboard" | "historial" | "reconciliacion" | "abonados">("dashboard");
   const today = format(new Date(), "d 'de' MMMM yyyy", { locale: es });
 
   // Hydrate auth and recover cleanly when the backend rejects an expired token.
@@ -50,8 +51,9 @@ export default function App() {
               ["dashboard",      "Estadías"],
               ["historial",      "Historial"],
               ["reconciliacion", "Excel"],
+              ...(auth?.role === "admin" ? [["abonados", "Abonados"] as const] : []),
             ] as const).map(([t, label]) => (
-              <button key={t} onClick={() => setTab(t)}
+              <button key={t} onClick={() => setTab(t as "dashboard" | "historial" | "reconciliacion" | "abonados")}
                 className={`px-2 sm:px-3 lg:px-4 py-1.5 lg:py-2 rounded-lg text-xs lg:text-sm font-bold transition-colors ${tab === t ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}>
                 {label}
               </button>
@@ -68,6 +70,7 @@ export default function App() {
         {tab === "dashboard"      && <Dashboard />}
         {tab === "historial"      && <HistoryView />}
         {tab === "reconciliacion" && <ReconciliationView />}
+        {tab === "abonados"       && auth?.role === "admin" && <AbonadosView />}
       </main>
     </div>
   );

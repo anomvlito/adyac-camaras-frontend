@@ -223,6 +223,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [sortStaysBy, setSortStaysBy] = useState<"entry_desc" | "entry_asc" | "exit_desc" | "exit_asc">("entry_desc");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -268,6 +269,21 @@ export default function Dashboard() {
   const entradas = useMemo(() => detections.filter((d) => d.direction === "APPROACHING"), [detections]);
   const salidas = useMemo(() => detections.filter((d) => d.direction === "DEPARTING"), [detections]);
   const triage = useMemo(() => detections.filter((d) => d.direction === "UNKNOWN"), [detections]);
+
+  const sortedStays = useMemo(() => {
+    return [...stays].sort((a, b) => {
+      const aEntry = a.entry_time ? new Date(a.entry_time).getTime() : 0;
+      const bEntry = b.entry_time ? new Date(b.entry_time).getTime() : 0;
+      const aExit = a.exit_time ? new Date(a.exit_time).getTime() : 0;
+      const bExit = b.exit_time ? new Date(b.exit_time).getTime() : 0;
+      
+      if (sortStaysBy === "entry_asc") return aEntry - bEntry;
+      if (sortStaysBy === "entry_desc") return bEntry - aEntry;
+      if (sortStaysBy === "exit_asc") return aExit - bExit;
+      if (sortStaysBy === "exit_desc") return bExit - aExit;
+      return 0;
+    });
+  }, [stays, sortStaysBy]);
 
   const reconcile = async () => {
     if (!entry || !exit || !resolvedPlate.trim() || invalidOrder) return;
@@ -570,12 +586,25 @@ export default function Dashboard() {
           <div className="mb-3">
             <div className="flex items-center justify-between gap-2">
               <h2 className="font-black text-slate-800">Sesiones completas</h2>
-              <span className="text-xs font-bold text-slate-500 rounded-lg bg-slate-100 px-2 py-1">{stays.length}</span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={sortStaysBy}
+                  onChange={(e) => setSortStaysBy(e.target.value as "entry_desc" | "entry_asc" | "exit_desc" | "exit_asc")}
+                  className="appearance-none text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-transparent outline-none cursor-pointer hover:text-slate-600 transition-colors"
+                  title="Ordenar sesiones"
+                >
+                  <option value="entry_desc">Entrada ↓</option>
+                  <option value="entry_asc">Entrada ↑</option>
+                  <option value="exit_desc">Salida ↓</option>
+                  <option value="exit_asc">Salida ↑</option>
+                </select>
+                <span className="text-xs font-bold text-slate-500 rounded-lg bg-slate-100 px-2 py-1">{stays.length}</span>
+              </div>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">Estadías conciliadas, con entrada y salida.</p>
           </div>
           <div className="space-y-3">
-            {stays.map((stay) => (
+            {sortedStays.map((stay) => (
               <article key={stay.stay_id} className="rounded-xl border border-slate-200 p-3">
                 <div className="grid grid-cols-2 gap-3">
                   <StayEvidence side="Entrada" imageUrl={stay.entry_image_url} time={stay.entry_time} />
