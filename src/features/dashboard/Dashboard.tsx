@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Clock3, RefreshCw, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, RefreshCw, X, Coins } from "lucide-react";
+import { format } from "date-fns";
 import { DASHBOARD_REFRESH_MS } from "@/lib/constants";
 import {
   type DetectionEvent,
@@ -23,6 +24,29 @@ import {
   promoteReviewImage,
   setDetectionDirection,
 } from "@/lib/stays";
+
+const CHILEAN_HOLIDAYS = new Set([
+  "2026-01-01", "2026-04-03", "2026-04-04", "2026-05-01", "2026-05-21", "2026-06-21", "2026-06-29",
+  "2026-07-16", "2026-08-15", "2026-09-18", "2026-09-19", "2026-10-12", "2026-10-31", "2026-11-01",
+  "2026-12-08", "2026-12-25",
+  "2027-01-01"
+]);
+
+function calculateTariff(entryTime: string | null, durationMinutes: number): number {
+  if (!entryTime || durationMinutes === 0) return 0;
+  
+  const entryDate = new Date(entryTime);
+  const dateString = format(entryDate, "yyyy-MM-dd");
+  const isWeekend = entryDate.getDay() === 0 || entryDate.getDay() === 6;
+  const isHoliday = CHILEAN_HOLIDAYS.has(dateString);
+  
+  if (isWeekend || isHoliday) {
+    return 5000;
+  }
+  
+  const cost = Math.round(durationMinutes * 33.3);
+  return Math.max(cost, 1000);
+}
 
 function localTime(value: string | null) {
   if (!value) return "—";
@@ -615,7 +639,13 @@ export default function Dashboard() {
                   <span className="inline-flex items-center gap-1.5 text-sm font-black text-indigo-700">
                     <Clock3 size={14} /> {formatDuration(stay.duration_minutes)}
                   </span>
-                  <p className="text-[10px] font-bold uppercase text-slate-400">{stay.match_type}</p>
+                  <div className="mt-1 flex items-center justify-center gap-1.5 text-emerald-600 font-bold bg-emerald-50 rounded-md py-0.5 px-2 w-max mx-auto border border-emerald-100">
+                    <Coins size={14} />
+                    <span>
+                      ${calculateTariff(stay.entry_time, stay.duration_minutes).toLocaleString("es-CL")}
+                    </span>
+                  </div>
+                  <p className="text-[10px] font-bold uppercase text-slate-400 mt-1">{stay.match_type}</p>
                 </div>
               </article>
             ))}
