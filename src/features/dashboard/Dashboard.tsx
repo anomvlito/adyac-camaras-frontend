@@ -32,8 +32,8 @@ const CHILEAN_HOLIDAYS = new Set([
   "2027-01-01"
 ]);
 
-function calculateTariff(entryTime: string | null, durationMinutes: number): number {
-  if (!entryTime || durationMinutes === 0) return 0;
+function calculateTariff(entryTime: string | null, durationMinutes: number | null): number {
+  if (!entryTime || !durationMinutes || durationMinutes === 0) return 0;
   
   const entryDate = new Date(entryTime);
   const dateString = format(entryDate, "yyyy-MM-dd");
