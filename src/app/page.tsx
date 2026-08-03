@@ -17,7 +17,11 @@ export default function App() {
     typeof window === "undefined" ? null : getAuth()
   );
   const [tab, setTab]         = useState<"dashboard" | "historial" | "reconciliacion" | "abonados">("dashboard");
-  const today = format(new Date(), "d 'de' MMMM yyyy", { locale: es });
+  const [today, setToday] = useState("");
+
+  useEffect(() => {
+    setToday(format(new Date(), "d 'de' MMMM yyyy", { locale: es }));
+  }, []);
 
   // Hydrate auth and recover cleanly when the backend rejects an expired token.
   useEffect(() => {
@@ -45,7 +49,11 @@ export default function App() {
             </div>
             <span className="hidden sm:inline font-black text-slate-900 text-base lg:text-lg">CentralParking</span>
           </div>
-          <p className="text-sm text-slate-400 hidden lg:block capitalize flex-1">{today}</p>
+          {today && (
+            <time className="hidden sm:block text-xs font-bold text-slate-400 capitalize bg-slate-50/50 px-3 py-1.5 rounded-full border border-slate-100">
+              {today}
+            </time>
+          )}
           <nav className="ml-auto flex gap-1 lg:gap-2">
             {([
               ["dashboard",      "Estadías"],
