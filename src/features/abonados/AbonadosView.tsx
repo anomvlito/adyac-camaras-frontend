@@ -22,7 +22,9 @@ export default function AbonadosView() {
   const loadExclusions = async () => {
     setLoading(true);
     try {
-      const data = await apiFetch("/api/plate-exclusions");
+      const response = await apiFetch("/api/plate-exclusions");
+      if (!response.ok) throw new Error("Error al cargar abonados");
+      const data = await response.json();
       setExclusions(data || []);
       setError(null);
     } catch (err: unknown) {
@@ -43,10 +45,15 @@ export default function AbonadosView() {
       return;
     }
     try {
-      await apiFetch("/api/plate-exclusions", {
+      const response = await apiFetch("/api/plate-exclusions", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plate: newPlate.toUpperCase(), max_distance: 2 }),
       });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Error al agregar abonado");
+      }
       setNewPlate("");
       loadExclusions();
     } catch (err: unknown) {
@@ -57,7 +64,8 @@ export default function AbonadosView() {
   const handleDelete = async (plate: string) => {
     if (!confirm(`¿Seguro que deseas eliminar la patente ${plate}?`)) return;
     try {
-      await apiFetch(`/api/plate-exclusions/${plate}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/plate-exclusions/${plate}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Error al eliminar abonado");
       loadExclusions();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Error al eliminar abonado");
