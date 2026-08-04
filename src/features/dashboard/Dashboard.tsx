@@ -247,7 +247,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [sortStaysBy, setSortStaysBy] = useState<"entry_desc" | "entry_asc" | "exit_desc" | "exit_asc">("entry_desc");
+  const [sortStaysBy, setSortStaysBy] = useState<"entry_desc" | "entry_asc" | "exit_desc" | "exit_asc">("entry_asc");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -607,25 +607,27 @@ export default function Dashboard() {
         </DashboardColumn>
 
         <section className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col min-w-0">
-          <div className="mb-3">
-            <div className="flex items-center justify-between gap-2">
+          <div className="mb-4">
+            <div className="flex items-center justify-between gap-2 mb-1">
               <h2 className="font-black text-slate-800">Sesiones completas</h2>
-              <div className="flex items-center gap-2">
-                <select
-                  value={sortStaysBy}
-                  onChange={(e) => setSortStaysBy(e.target.value as "entry_desc" | "entry_asc" | "exit_desc" | "exit_asc")}
-                  className="appearance-none text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-transparent outline-none cursor-pointer hover:text-slate-600 transition-colors"
-                  title="Ordenar sesiones"
-                >
-                  <option value="entry_desc">Entrada ↓</option>
-                  <option value="entry_asc">Entrada ↑</option>
-                  <option value="exit_desc">Salida ↓</option>
-                  <option value="exit_asc">Salida ↑</option>
-                </select>
-                <span className="text-xs font-bold text-slate-500 rounded-lg bg-slate-100 px-2 py-1">{stays.length}</span>
-              </div>
+              <span className="text-xs font-bold text-slate-500 rounded-lg bg-slate-100 px-2 py-1">{stays.length}</span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">Estadías conciliadas, con entrada y salida.</p>
+            <p className="text-xs text-slate-500 mb-2">Estadías conciliadas, con entrada y salida.</p>
+            <div className="flex items-center gap-2">
+              <label htmlFor="sortFilter" className="text-xs text-slate-400 font-medium">Filtro de orden:</label>
+              <select
+                id="sortFilter"
+                value={sortStaysBy}
+                onChange={(e) => setSortStaysBy(e.target.value as "entry_desc" | "entry_asc" | "exit_desc" | "exit_asc")}
+                className="text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 outline-none cursor-pointer hover:border-slate-300 transition-colors"
+                title="Ordenar sesiones"
+              >
+                <option value="entry_asc">Cronológico por entrada</option>
+                <option value="entry_desc">Entrada más reciente</option>
+                <option value="exit_asc">Cronológico por salida</option>
+                <option value="exit_desc">Salida más reciente</option>
+              </select>
+            </div>
           </div>
           <div className="space-y-3">
             {sortedStays.map((stay) => (
