@@ -30,6 +30,10 @@ function triageDetection() {
   };
 }
 
+function resolvedDetection(direction: "APPROACHING" | "DEPARTING") {
+  return { ...triageDetection(), direction };
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -110,5 +114,85 @@ describe("triage direction persistence", () => {
 
     expect(await screen.findByText("La detección ya tiene una dirección resuelta")).toBeTruthy();
     expect(within(triageSection).getByText("TEST77")).toBeTruthy();
+  });
+
+  it("moves a misclassified card from Entradas to Salidas pendientes when Salida is clicked", async () => {
+    stubAuth();
+    let direction: "APPROACHING" | "DEPARTING" = "APPROACHING";
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/stays/auto-reconcile-exact")) {
+        return Promise.resolve(jsonResponse({ date: currentOperationalDate(), reconciled: 0, skipped: 0 }));
+      }
+      if (url.includes("/api/stays")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/stay-proposals")) return Promise.resolve(jsonResponse([]));
+      if (url.match(/\/api\/detections\/77$/) && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        expect(body).toEqual({ action: "set_direction", direction: "DEPARTING" });
+        direction = "DEPARTING";
+        return Promise.resolve(jsonResponse({ detection_id: 77, direction: "DEPARTING" }));
+      }
+      if (url.includes("/api/detections")) {
+        return Promise.resolve(jsonResponse([resolvedDetection(direction)]));
+      }
+      if (url.includes("/api/monitor/review")) return Promise.resolve(jsonResponse({ images: [] }));
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Dashboard />);
+
+    const entradasSection = (await screen.findByRole("heading", { name: "Entradas pendientes" })).closest("section")!;
+    expect(within(entradasSection).getByText("TEST77")).toBeTruthy();
+
+    await userEvent.click(within(entradasSection).getByRole("button", { name: "Salida" }));
+
+    await waitFor(() => {
+      const salidasSection = screen.getByRole("heading", { name: "Salidas pendientes" }).closest("section")!;
+      expect(within(salidasSection).getByText("TEST77")).toBeTruthy();
+    });
+
+    const entradasSectionAfter = screen.getByRole("heading", { name: "Entradas pendientes" }).closest("section")!;
+    expect(within(entradasSectionAfter).queryByText("TEST77")).toBeNull();
+  });
+
+  it("returns a resolved card to Sin dirección clara when Quitar dirección is clicked", async () => {
+    stubAuth();
+    let direction: "APPROACHING" | "UNKNOWN" = "APPROACHING";
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/stays/auto-reconcile-exact")) {
+        return Promise.resolve(jsonResponse({ date: currentOperationalDate(), reconciled: 0, skipped: 0 }));
+      }
+      if (url.includes("/api/stays")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/stay-proposals")) return Promise.resolve(jsonResponse([]));
+      if (url.match(/\/api\/detections\/77$/) && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        expect(body).toEqual({ action: "set_direction", direction: "UNKNOWN" });
+        direction = "UNKNOWN";
+        return Promise.resolve(jsonResponse({ detection_id: 77, direction: "UNKNOWN" }));
+      }
+      if (url.includes("/api/detections")) {
+        return Promise.resolve(jsonResponse([{ ...triageDetection(), direction }]));
+      }
+      if (url.includes("/api/monitor/review")) return Promise.resolve(jsonResponse({ images: [] }));
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Dashboard />);
+
+    const entradasSection = (await screen.findByRole("heading", { name: "Entradas pendientes" })).closest("section")!;
+    expect(within(entradasSection).getByText("TEST77")).toBeTruthy();
+
+    await userEvent.click(within(entradasSection).getByRole("button", { name: "Quitar dirección" }));
+
+    await waitFor(() => {
+      const triageSection = screen.getByText("Sin dirección clara").closest("section")!;
+      expect(within(triageSection).getByText("TEST77")).toBeTruthy();
+    });
+
+    const entradasSectionAfter = screen.getByRole("heading", { name: "Entradas pendientes" }).closest("section")!;
+    expect(within(entradasSectionAfter).queryByText("TEST77")).toBeNull();
   });
 });

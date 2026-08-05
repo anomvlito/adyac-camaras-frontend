@@ -193,7 +193,7 @@ export async function dismissDetection(detectionId: number) {
 
 export async function setDetectionDirection(
   detectionId: number,
-  direction: "APPROACHING" | "DEPARTING"
+  direction: "APPROACHING" | "DEPARTING" | "UNKNOWN"
 ) {
   return responseJson<{ detection_id: number; direction: DetectionDirection }>(
     await apiFetch(`${API}/api/detections/${detectionId}`, {
