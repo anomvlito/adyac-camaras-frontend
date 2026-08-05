@@ -158,6 +158,7 @@ function DetectionCard({
   onUseAsEntry,
   onUseAsExit,
   onDismiss,
+  onResetDirection,
 }: {
   item: DetectionEvent;
   selected: boolean;
@@ -165,6 +166,7 @@ function DetectionCard({
   onUseAsEntry: () => void;
   onUseAsExit: () => void;
   onDismiss: () => void;
+  onResetDirection: () => void;
 }) {
   return (
     <article
@@ -190,7 +192,7 @@ function DetectionCard({
           </p>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-2 mt-3">
+      <div className={`grid gap-2 mt-3 ${item.direction === "UNKNOWN" ? "grid-cols-3" : "grid-cols-4"}`}>
         <button disabled={busy} onClick={onUseAsEntry}
           className="rounded-lg bg-emerald-100 py-2 text-xs font-black text-emerald-700 disabled:opacity-50">
           Entrada
@@ -199,6 +201,12 @@ function DetectionCard({
           className="rounded-lg bg-rose-100 py-2 text-xs font-black text-rose-700 disabled:opacity-50">
           Salida
         </button>
+        {item.direction !== "UNKNOWN" && (
+          <button disabled={busy} onClick={onResetDirection}
+            className="rounded-lg bg-amber-100 py-2 text-xs font-black text-amber-700 disabled:opacity-50">
+            Quitar dirección
+          </button>
+        )}
         <button disabled={busy} onClick={onDismiss}
           className="rounded-lg bg-slate-100 py-2 text-xs font-black text-slate-600 disabled:opacity-50">
           Descartar
@@ -344,7 +352,7 @@ export default function Dashboard() {
     }
   };
 
-  const persistDirection = async (item: DetectionEvent, direction: "APPROACHING" | "DEPARTING") => {
+  const persistDirection = async (item: DetectionEvent, direction: "APPROACHING" | "DEPARTING" | "UNKNOWN") => {
     setBusy(true);
     try {
       await setDetectionDirection(item.detection_id, direction);
@@ -361,12 +369,17 @@ export default function Dashboard() {
   const markAsEntry = (item: DetectionEvent) => {
     setEntry(item);
     if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
-    if (item.direction === "UNKNOWN") persistDirection(item, "APPROACHING");
+    if (item.direction !== "APPROACHING") persistDirection(item, "APPROACHING");
   };
   const markAsExit = (item: DetectionEvent) => {
     setExit(item);
     if (!resolvedPlate) setResolvedPlate(item.normalized_plate);
-    if (item.direction === "UNKNOWN") persistDirection(item, "DEPARTING");
+    if (item.direction !== "DEPARTING") persistDirection(item, "DEPARTING");
+  };
+  const resetDirection = (item: DetectionEvent) => {
+    if (entry?.detection_id === item.detection_id) setEntry(null);
+    if (exit?.detection_id === item.detection_id) setExit(null);
+    persistDirection(item, "UNKNOWN");
   };
   const reviewProposal = (proposal: StayProposal) => {
     setEntry(proposal.entry);
@@ -583,6 +596,7 @@ export default function Dashboard() {
               onUseAsEntry={() => markAsEntry(item)}
               onUseAsExit={() => markAsExit(item)}
               onDismiss={() => dismiss(item)}
+              onResetDirection={() => resetDirection(item)}
             />
           ))}
         </DashboardColumn>
@@ -602,6 +616,7 @@ export default function Dashboard() {
               onUseAsEntry={() => markAsEntry(item)}
               onUseAsExit={() => markAsExit(item)}
               onDismiss={() => dismiss(item)}
+              onResetDirection={() => resetDirection(item)}
             />
           ))}
         </DashboardColumn>
@@ -681,6 +696,7 @@ export default function Dashboard() {
               onUseAsEntry={() => markAsEntry(item)}
               onUseAsExit={() => markAsExit(item)}
               onDismiss={() => dismiss(item)}
+              onResetDirection={() => resetDirection(item)}
             />
           ))}
         </div>

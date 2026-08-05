@@ -64,16 +64,33 @@ describe("setDetectionDirection", () => {
     });
   });
 
-  it("surfaces the backend error when the detection is already resolved", async () => {
+  it("surfaces the backend error when the detection is already reconciled", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 409,
-      json: async () => ({ detail: "La detección ya tiene una dirección resuelta" }),
+      json: async () => ({ detail: "La detección ya fue conciliada y no admite corrección de dirección" }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(setDetectionDirection(42, "DEPARTING")).rejects.toThrow(
-      "La detección ya tiene una dirección resuelta"
+      "La detección ya fue conciliada y no admite corrección de dirección"
     );
+  });
+
+  it("PATCHes with direction UNKNOWN to revert a resolved detection", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ detection_id: 42, direction: "UNKNOWN" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await setDetectionDirection(42, "UNKNOWN");
+
+    expect(result).toEqual({ detection_id: 42, direction: "UNKNOWN" });
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(options.body)).toEqual({
+      action: "set_direction",
+      direction: "UNKNOWN",
+    });
   });
 });
