@@ -261,8 +261,12 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      await autoReconcileExact(date);
-      await consolidateFuzzySightings(date);
+      // Limpieza en segundo plano, best-effort: si el backend rechaza una
+      // de estas dos (ej. 422 real en producción 2026-08-10, con el
+      // dashboard entero sin cargar por esto), no puede tumbar el resto
+      // del dashboard — solo se pierde esa pasada de limpieza puntual.
+      await autoReconcileExact(date).catch(() => {});
+      await consolidateFuzzySightings(date).catch(() => {});
       const [nextStays, nextDetections, nextInvalid, nextProposals, nextReview] = await Promise.all([
         fetchStays(date, plate.trim() || undefined),
         fetchUnmatchedDetections(date, includePreviousDay),
