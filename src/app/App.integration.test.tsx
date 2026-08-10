@@ -103,6 +103,54 @@ describe("application flow characterization", () => {
     expect(screen.getByRole("button", { name: "Comparar" })).toBeTruthy();
   });
 
+  it("still loads the dashboard when the fuzzy-sightings cleanup call fails", async () => {
+    // Regresión 2026-08-10: un 422 real de /api/sightings/consolidate-fuzzy
+    // en producción (límite de query mal alineado con el frontend) tumbó el
+    // dashboard entero porque el llamado no tenía try/catch propio y corría
+    // antes del Promise.all() que carga estadías/detecciones/propuestas.
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      token: "synthetic-token",
+      username: "tester",
+      role: "administrador",
+    }));
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/api/sightings/consolidate-fuzzy")) {
+        return Promise.resolve(jsonResponse({ detail: "limit inválido" }, 422));
+      }
+      if (url.includes("/api/stays/auto-reconcile-exact")) return Promise.resolve(jsonResponse({
+        date: "2026-07-28", reconciled: 0, skipped: 0,
+      }));
+      if (url.includes("/api/stays")) return Promise.resolve(jsonResponse([{
+        stay_id: 1,
+        resolved_plate: "TEST12",
+        entry_detection_id: 10,
+        exit_detection_id: 11,
+        entry_time: "2026-07-24T10:00:00-04:00",
+        exit_time: "2026-07-24T11:27:00-04:00",
+        duration_minutes: 87,
+        match_type: "MANUAL",
+        match_confidence: 0.8,
+        status: "COMPLETED",
+        entry_image_url: null,
+        exit_image_url: null,
+        fee: 0,
+      }]));
+      if (url.includes("/api/stay-proposals")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/detections")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/monitor/review")) return Promise.resolve(jsonResponse({ images: [] }));
+      if (url.includes("/api/sightings")) return Promise.resolve(jsonResponse({ sightings: [] }));
+      if (url.includes("/api/history")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeTruthy();
+    expect(await screen.findByText("1 h 27 min")).toBeTruthy();
+  });
+
   it("keeps the invalid-login error behavior", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "invalid" }, 401)));
     render(<LoginPage onLogin={() => {}} />);
