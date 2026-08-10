@@ -10,6 +10,7 @@ import {
   type ReviewImage,
   type StayProposal,
   autoReconcileExact,
+  consolidateFuzzySightings,
   currentOperationalDate,
   dismissDetection,
   fetchStays,
@@ -261,6 +262,7 @@ export default function Dashboard() {
     setLoading(true);
     try {
       await autoReconcileExact(date);
+      await consolidateFuzzySightings(date);
       const [nextStays, nextDetections, nextInvalid, nextProposals, nextReview] = await Promise.all([
         fetchStays(date, plate.trim() || undefined),
         fetchUnmatchedDetections(date, includePreviousDay),

@@ -142,6 +142,25 @@ export async function autoReconcileExact(date: string) {
   );
 }
 
+// Agrupa lecturas de OCR que son el mismo vehículo leído distinto en una
+// misma ráfaga (ver ADR-005 en centralparking-mvp) y descarta las
+// perdedoras (match_status = DISMISSED, sin borrar ninguna imagen). Mismo
+// patrón que autoReconcileExact: se llama en cada refresco del dashboard,
+// sin acción manual del admin.
+export async function consolidateFuzzySightings(date: string) {
+  const params = new URLSearchParams({ date, limit: "2000" });
+  return responseJson<{
+    date: string;
+    groups_found: number;
+    dismissed: number;
+    shadow_mode: boolean;
+  }>(
+    await apiFetch(`${API}/api/sightings/consolidate-fuzzy?${params}`, {
+      method: "POST",
+    })
+  );
+}
+
 export async function fetchReviewImages(date: string) {
   const params = new URLSearchParams({ date, limit: "50" });
   const payload = await responseJson<{ images: ReviewImage[] }>(

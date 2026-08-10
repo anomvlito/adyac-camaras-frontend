@@ -34,6 +34,9 @@ describe("application flow characterization", () => {
       if (url.includes("/api/stays/auto-reconcile-exact")) return Promise.resolve(jsonResponse({
         date: "2026-07-28", reconciled: 0, skipped: 0,
       }));
+      if (url.includes("/api/sightings/consolidate-fuzzy")) return Promise.resolve(jsonResponse({
+        date: "2026-07-28", groups_found: 0, dismissed: 0, shadow_mode: false,
+      }));
       if (url.includes("/api/stays")) return Promise.resolve(jsonResponse([{
         stay_id: 1,
         resolved_plate: "TEST12",
@@ -65,7 +68,7 @@ describe("application flow characterization", () => {
     expect(screen.getByText("Sin foto de entrada")).toBeTruthy();
     expect(screen.getByText("Sin foto de salida")).toBeTruthy();
     expect(screen.getByLabelText("Fecha")).toHaveProperty("value", currentOperationalDate());
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(7));
     const dashboardUrls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(dashboardUrls.every(url => url.includes(`date=${currentOperationalDate()}`))).toBe(true);
 
