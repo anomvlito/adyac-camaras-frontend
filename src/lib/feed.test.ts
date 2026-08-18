@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterHistoryByAction, mergeFeedEntries, sightingToEntry } from "./feed";
+import { filterHistoryByAction, filterHistoryByPlate, mergeFeedEntries, sightingToEntry } from "./feed";
 import type { HistoryEntry, Sighting } from "./types";
 
 const historyEntry: HistoryEntry = {
@@ -48,5 +48,24 @@ describe("feed characterization", () => {
     expect(filterHistoryByAction([historyEntry, exit], "ALL")).toHaveLength(2);
     expect(filterHistoryByAction([historyEntry, exit], "ENTRY")).toEqual([historyEntry]);
     expect(filterHistoryByAction([historyEntry, exit], "EXIT")).toEqual([exit]);
+  });
+
+  it("keeps every entry when the plate search is empty", () => {
+    const exit = { ...historyEntry, session_id: 11, plate: "TEST11", action: "EXIT" };
+    expect(filterHistoryByPlate([historyEntry, exit], "")).toHaveLength(2);
+    expect(filterHistoryByPlate([historyEntry, exit], "   ")).toHaveLength(2);
+  });
+
+  it("matches a partial plate case-insensitively", () => {
+    const exit = { ...historyEntry, session_id: 11, plate: "TEST11", action: "EXIT" };
+    expect(filterHistoryByPlate([historyEntry, exit], "est11")).toEqual([exit]);
+  });
+
+  it("ignores spaces and dashes typed in the search, same as the plate correction input", () => {
+    expect(filterHistoryByPlate([historyEntry], "te-st 10")).toEqual([historyEntry]);
+  });
+
+  it("finds no rows for a plate that never appeared", () => {
+    expect(filterHistoryByPlate([historyEntry], "ZZ9999")).toEqual([]);
   });
 });

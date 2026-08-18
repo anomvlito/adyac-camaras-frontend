@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { addDays, format, isToday, parseISO, subDays } from "date-fns";
-import { Calendar, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
 import { FeedRow } from "@/components/parking/ParkingFeed";
 import { API, apiFetch } from "@/lib/auth";
-import { filterHistoryByAction, mergeFeedEntries } from "@/lib/feed";
+import { filterHistoryByAction, filterHistoryByPlate, mergeFeedEntries } from "@/lib/feed";
 import type { HistoryEntry, Sighting } from "@/lib/types";
 
 export default function Historial() {
   const [date, setDate]     = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [filter, setFilter] = useState<"ALL" | "ENTRY" | "EXIT">("ALL");
+  const [plateQuery, setPlateQuery] = useState("");
   const [rows, setRows]     = useState<HistoryEntry[]>([]);
   const [parked, setParked] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -37,7 +38,7 @@ export default function Historial() {
 
   useEffect(() => { load(); }, [load]);
 
-  const visible = filterHistoryByAction(rows, filter);
+  const visible = filterHistoryByPlate(filterHistoryByAction(rows, filter), plateQuery);
 
   return (
     <div className="space-y-4">
@@ -71,6 +72,13 @@ export default function Historial() {
         <button onClick={load} className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50">
           <RefreshCw size={15} className={`text-slate-500 ${loading ? "animate-spin" : ""}`} />
         </button>
+        {/* Buscador de patente */}
+        <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-2 shrink-0">
+          <Search size={14} className="text-slate-400" />
+          <input type="text" value={plateQuery} onChange={e => setPlateQuery(e.target.value)}
+            placeholder="Buscar patente"
+            className="text-sm font-semibold text-slate-700 outline-none bg-transparent w-28 lg:w-32 placeholder:font-normal placeholder:text-slate-400" />
+        </div>
         {visible.length > 0 && (
           <span className="ml-auto text-xs text-slate-400">{visible.length} registros</span>
         )}
@@ -84,7 +92,11 @@ export default function Historial() {
               r={r} showDate onPlateSaved={load} parked={parked} />
           ))}
           {visible.length === 0 && !loading && (
-            <p className="text-center text-slate-400 py-16">Sin registros para {date}</p>
+            <p className="text-center text-slate-400 py-16">
+              {plateQuery.trim()
+                ? `Sin coincidencias para "${plateQuery}" el ${date}`
+                : `Sin registros para ${date}`}
+            </p>
           )}
         </div>
       </div>
