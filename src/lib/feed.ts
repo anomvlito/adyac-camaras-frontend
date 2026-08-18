@@ -26,3 +26,18 @@ export function filterHistoryByAction(
 ): HistoryEntry[] {
   return filter === "ALL" ? entries : entries.filter(entry => entry.action === filter);
 }
+
+function normalizePlateQuery(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+export function filterHistoryByPlate(
+  entries: HistoryEntry[],
+  query: string,
+): HistoryEntry[] {
+  const normalized = normalizePlateQuery(query);
+  if (!normalized) return entries;
+  return entries.filter(entry =>
+    normalizePlateQuery(entry.plate).includes(normalized)
+  );
+}
